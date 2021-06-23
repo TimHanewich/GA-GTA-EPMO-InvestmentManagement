@@ -1,0 +1,2173 @@
+'use strict';/* eslint-disable *//*! pym.js - v1.3.2 - 2018-02-13 *//*
+* Pym.js is library that resizes an iframe based on the width of the parent and the resulting height of the child.
+* Check out the docs at http://blog.apps.npr.org/pym.js/ or the readme at README.md for usage.
+*//** @module pym */(function(factory){if(typeof define==='function'&&define.amd){define(factory)}else if(typeof module!=='undefined'&&module.exports){module.exports=factory()}else{window.pym=factory.call(this)}})(function(){var MESSAGE_DELIMITER='xPYMx';var lib={};/**
+  * Create and dispatch a custom pym event
+  *
+  * @method _raiseCustomEvent
+  * @inner
+  *
+  * @param {String} eventName
+  */var _raiseCustomEvent=function _raiseCustomEvent(eventName){var event=document.createEvent('Event');event.initEvent('pym:'+eventName,true,true);document.dispatchEvent(event)};/**
+  * Generic function for parsing URL params.
+  * Via http://stackoverflow.com/questions/901115/how-can-i-get-query-string-values-in-javascript
+  *
+  * @method _getParameterByName
+  * @inner
+  *
+  * @param {String} name The name of the paramter to get from the URL.
+  */var _getParameterByName=function _getParameterByName(name){var regex=new RegExp('[\\?&]'+name.replace(/[\[]/,'\\[').replace(/[\]]/,'\\]')+'=([^&#]*)');var results=regex.exec(location.search);if(results===null){return''}return decodeURIComponent(results[1].replace(/\+/g,' '))};/**
+   * Check the message to make sure it comes from an acceptable xdomain.
+   * Defaults to '*' but can be overriden in config.
+   *
+   * @method _isSafeMessage
+   * @inner
+   *
+   * @param {Event} e The message event.
+   * @param {Object} settings Configuration.
+   */var _isSafeMessage=function _isSafeMessage(e,settings){if(settings.xdomain!=='*'){// If origin doesn't match our xdomain, return.
+if(!e.origin.match(new RegExp(settings.xdomain+'$'))){return}}// Ignore events that do not carry string data #151
+if(typeof e.data!=='string'){return}return true};var _isSafeUrl=function _isSafeUrl(url){// Adapted from angular 2 url sanitizer
+var SAFE_URL_PATTERN=/^(?:(?:https?|mailto|ftp):|[^&:/?#]*(?:[/?#]|$))/gi;if(!url.match(SAFE_URL_PATTERN)){return}return true};/**
+   * Construct a message to send between frames.
+   *
+   * NB: We use string-building here because JSON message passing is
+   * not supported in all browsers.
+   *
+   * @method _makeMessage
+   * @inner
+   *
+   * @param {String} id The unique id of the message recipient.
+   * @param {String} messageType The type of message to send.
+   * @param {String} message The message to send.
+   */var _makeMessage=function _makeMessage(id,messageType,message){var bits=['pym',id,messageType,message];return bits.join(MESSAGE_DELIMITER)};/**
+   * Construct a regex to validate and parse messages.
+   *
+   * @method _makeMessageRegex
+   * @inner
+   *
+   * @param {String} id The unique id of the message recipient.
+   */var _makeMessageRegex=function _makeMessageRegex(id){var bits=['pym',id,'(\\S+)','(.*)'];return new RegExp('^'+bits.join(MESSAGE_DELIMITER)+'$')};/**
+  * Underscore implementation of getNow
+  *
+  * @method _getNow
+  * @inner
+  *
+  */var _getNow=Date.now||function(){return new Date().getTime()};/**
+  * Underscore implementation of throttle
+  *
+  * @method _throttle
+  * @inner
+  *
+  * @param {function} func Throttled function
+  * @param {number} wait Throttle wait time
+  * @param {object} options Throttle settings
+  */var _throttle=function _throttle(func,wait,options){var context,args,result;var timeout=null;var previous=0;if(!options){options={}}var later=function later(){previous=options.leading===false?0:_getNow();timeout=null;result=func.apply(context,args);if(!timeout){context=args=null}};return function(){var now=_getNow();if(!previous&&options.leading===false){previous=now}var remaining=wait-(now-previous);context=this;args=arguments;if(remaining<=0||remaining>wait){if(timeout){clearTimeout(timeout);timeout=null}previous=now;result=func.apply(context,args);if(!timeout){context=args=null}}else if(!timeout&&options.trailing!==false){timeout=setTimeout(later,remaining)}return result}};/**
+   * Clean autoInit Instances: those that point to contentless iframes
+   * @method _cleanAutoInitInstances
+   * @inner
+   */var _cleanAutoInitInstances=function _cleanAutoInitInstances(){var length=lib.autoInitInstances.length;// Loop backwards to avoid index issues
+for(var idx=length-1;idx>=0;idx--){var instance=lib.autoInitInstances[idx];// If instance has been removed or is contentless then remove it
+if(instance.el.getElementsByTagName('iframe').length&&instance.el.getElementsByTagName('iframe')[0].contentWindow){continue}else{// Remove the reference to the removed or orphan instance
+lib.autoInitInstances.splice(idx,1)}}};/**
+   * Store auto initialized Pym instances for further reference
+   * @name module:pym#autoInitInstances
+   * @type Array
+   * @default []
+   */lib.autoInitInstances=[];/**
+   * Initialize Pym for elements on page that have data-pym attributes.
+   * Expose autoinit in case we need to call it from the outside
+   * @instance
+   * @method autoInit
+   * @param {Boolean} doNotRaiseEvents flag to avoid sending custom events
+   */lib.autoInit=function(doNotRaiseEvents){var elements=document.querySelectorAll('[data-pym-src]:not([data-pym-auto-initialized])');var length=elements.length;// Clean stored instances in case needed
+_cleanAutoInitInstances();for(var idx=0;idx<length;++idx){var element=elements[idx];/*
+          * Mark automatically-initialized elements so they are not
+          * re-initialized if the user includes pym.js more than once in the
+          * same document.
+          */element.setAttribute('data-pym-auto-initialized','');// Ensure elements have an id
+if(element.id===''){element.id='pym-'+idx+'-'+Math.random().toString(36).substr(2,5)}var src=element.getAttribute('data-pym-src');// List of data attributes to configure the component
+// structure: {'attribute name': 'type'}
+var settings={'xdomain':'string','title':'string','name':'string','id':'string','sandbox':'string','allowfullscreen':'boolean','parenturlparam':'string','parenturlvalue':'string','optionalparams':'boolean','trackscroll':'boolean','scrollwait':'number'};var config={};for(var attribute in settings){// via https://developer.mozilla.org/en-US/docs/Web/API/Element/getAttribute#Notes
+if(element.getAttribute('data-pym-'+attribute)!==null){switch(settings[attribute]){case'boolean':config[attribute]=!(element.getAttribute('data-pym-'+attribute)==='false');// jshint ignore:line
+break;case'string':config[attribute]=element.getAttribute('data-pym-'+attribute);break;case'number':var n=Number(element.getAttribute('data-pym-'+attribute));if(!isNaN(n)){config[attribute]=n}break;default:console.err('unrecognized attribute type');}}}// Store references to autoinitialized pym instances
+var parent=new lib.Parent(element.id,src,config);lib.autoInitInstances.push(parent)}// Fire customEvent
+if(!doNotRaiseEvents){_raiseCustomEvent('pym-initialized')}// Return stored autoinitalized pym instances
+return lib.autoInitInstances};/**
+   * The Parent half of a response iframe.
+   *
+   * @memberof module:pym
+   * @class Parent
+   * @param {String} id The id of the div into which the iframe will be rendered. sets {@link module:pym.Parent~id}
+   * @param {String} url The url of the iframe source. sets {@link module:pym.Parent~url}
+   * @param {Object} [config] Configuration for the parent instance. sets {@link module:pym.Parent~settings}
+   * @param {string} [config.xdomain='*'] - xdomain to validate messages received
+   * @param {string} [config.title] - if passed it will be assigned to the iframe title attribute
+   * @param {string} [config.name] - if passed it will be assigned to the iframe name attribute
+   * @param {string} [config.id] - if passed it will be assigned to the iframe id attribute
+   * @param {boolean} [config.allowfullscreen] - if passed and different than false it will be assigned to the iframe allowfullscreen attribute
+   * @param {string} [config.sandbox] - if passed it will be assigned to the iframe sandbox attribute (we do not validate the syntax so be careful!!)
+   * @param {string} [config.parenturlparam] - if passed it will be override the default parentUrl query string parameter name passed to the iframe src
+   * @param {string} [config.parenturlvalue] - if passed it will be override the default parentUrl query string parameter value passed to the iframe src
+   * @param {string} [config.optionalparams] - if passed and different than false it will strip the querystring params parentUrl and parentTitle passed to the iframe src
+   * @param {boolean} [config.trackscroll] - if passed it will activate scroll tracking on the parent
+   * @param {number} [config.scrollwait] - if passed it will set the throttle wait in order to fire scroll messaging. Defaults to 100 ms.
+   * @see {@link https://developer.mozilla.org/en-US/docs/Web/HTML/Element/iframe iFrame}
+   */lib.Parent=function(id,url,config){/**
+       * The id of the container element
+       *
+       * @memberof module:pym.Parent
+       * @member {string} id
+       * @inner
+       */this.id=id;/**
+       * The url that will be set as the iframe's src
+       *
+       * @memberof module:pym.Parent
+       * @member {String} url
+       * @inner
+       */this.url=url;/**
+       * The container DOM object
+       *
+       * @memberof module:pym.Parent
+       * @member {HTMLElement} el
+       * @inner
+       */this.el=document.getElementById(id);/**
+       * The contained child iframe
+       *
+       * @memberof module:pym.Parent
+       * @member {HTMLElement} iframe
+       * @inner
+       * @default null
+       */this.iframe=null;/**
+       * The parent instance settings, updated by the values passed in the config object
+       *
+       * @memberof module:pym.Parent
+       * @member {Object} settings
+       * @inner
+       */this.settings={xdomain:'*',optionalparams:true,parenturlparam:'parentUrl',parenturlvalue:window.location.href,trackscroll:false,scrollwait:100};/**
+       * RegularExpression to validate the received messages
+       *
+       * @memberof module:pym.Parent
+       * @member {String} messageRegex
+       * @inner
+       */this.messageRegex=_makeMessageRegex(this.id);/**
+       * Stores the registered messageHandlers for each messageType
+       *
+       * @memberof module:pym.Parent
+       * @member {Object} messageHandlers
+       * @inner
+       */this.messageHandlers={};// ensure a config object
+config=config||{};/**
+       * Construct the iframe.
+       *
+       * @memberof module:pym.Parent
+       * @method _constructIframe
+       * @inner
+       */this._constructIframe=function(){// Calculate the width of this element.
+var width=this.el.offsetWidth.toString();// Create an iframe element attached to the document.
+this.iframe=document.createElement('iframe');// Save fragment id
+var hash='';var hashIndex=this.url.indexOf('#');if(hashIndex>-1){hash=this.url.substring(hashIndex,this.url.length);this.url=this.url.substring(0,hashIndex)}// If the URL contains querystring bits, use them.
+// Otherwise, just create a set of valid params.
+if(this.url.indexOf('?')<0){this.url+='?'}else{this.url+='&'}// Append the initial width as a querystring parameter
+// and optional params if configured to do so
+this.iframe.src=this.url+'initialWidth='+width+'&childId='+this.id;if(this.settings.optionalparams){this.iframe.src+='&parentTitle='+encodeURIComponent(document.title);this.iframe.src+='&'+this.settings.parenturlparam+'='+encodeURIComponent(this.settings.parenturlvalue)}this.iframe.src+=hash;// Set some attributes to this proto-iframe.
+this.iframe.setAttribute('width','100%');this.iframe.setAttribute('scrolling','no');this.iframe.setAttribute('marginheight','0');this.iframe.setAttribute('frameborder','0');if(this.settings.title){this.iframe.setAttribute('title',this.settings.title)}if(this.settings.allowfullscreen!==undefined&&this.settings.allowfullscreen!==false){this.iframe.setAttribute('allowfullscreen','')}if(this.settings.sandbox!==undefined&&typeof this.settings.sandbox==='string'){this.iframe.setAttribute('sandbox',this.settings.sandbox)}if(this.settings.id){if(!document.getElementById(this.settings.id)){this.iframe.setAttribute('id',this.settings.id)}}if(this.settings.name){this.iframe.setAttribute('name',this.settings.name)}// Replace the child content if needed
+// (some CMSs might strip out empty elements)
+while(this.el.firstChild){this.el.removeChild(this.el.firstChild)}// Append the iframe to our element.
+this.el.appendChild(this.iframe);// Add an event listener that will handle redrawing the child on resize.
+window.addEventListener('resize',this._onResize);// Add an event listener that will send the child the viewport.
+if(this.settings.trackscroll){window.addEventListener('scroll',this._throttleOnScroll)}};/**
+       * Send width on resize.
+       *
+       * @memberof module:pym.Parent
+       * @method _onResize
+       * @inner
+       */this._onResize=function(){this.sendWidth();if(this.settings.trackscroll){this.sendViewportAndIFramePosition()}}.bind(this);/**
+       * Send viewport and iframe info on scroll.
+       *
+       * @memberof module:pym.Parent
+       * @method _onScroll
+       * @inner
+       */this._onScroll=function(){this.sendViewportAndIFramePosition()}.bind(this);/**
+       * Fire all event handlers for a given message type.
+       *
+       * @memberof module:pym.Parent
+       * @method _fire
+       * @inner
+       *
+       * @param {String} messageType The type of message.
+       * @param {String} message The message data.
+       */this._fire=function(messageType,message){if(messageType in this.messageHandlers){for(var i=0;i<this.messageHandlers[messageType].length;i++){this.messageHandlers[messageType][i].call(this,message)}}};/**
+       * Remove this parent from the page and unbind it's event handlers.
+       *
+       * @memberof module:pym.Parent
+       * @method remove
+       * @instance
+       */this.remove=function(){window.removeEventListener('message',this._processMessage);window.removeEventListener('resize',this._onResize);this.el.removeChild(this.iframe);// _cleanAutoInitInstances in case this parent was autoInitialized
+_cleanAutoInitInstances()};/**
+       * Process a new message from the child.
+       *
+       * @memberof module:pym.Parent
+       * @method _processMessage
+       * @inner
+       *
+       * @param {Event} e A message event.
+       */this._processMessage=function(e){// First, punt if this isn't from an acceptable xdomain.
+if(!_isSafeMessage(e,this.settings)){return}// Discard object messages, we only care about strings
+if(typeof e.data!=='string'){return}// Grab the message from the child and parse it.
+var match=e.data.match(this.messageRegex);// If there's no match or too many matches in the message, punt.
+if(!match||match.length!==3){return false}var messageType=match[1];var message=match[2];this._fire(messageType,message)}.bind(this);/**
+       * Resize iframe in response to new height message from child.
+       *
+       * @memberof module:pym.Parent
+       * @method _onHeightMessage
+       * @inner
+       *
+       * @param {String} message The new height.
+       */this._onHeightMessage=function(message){/*
+           * Handle parent height message from child.
+           */var height=parseInt(message);this.iframe.setAttribute('height',height+'px')};/**
+       * Navigate parent to a new url.
+       *
+       * @memberof module:pym.Parent
+       * @method _onNavigateToMessage
+       * @inner
+       *
+       * @param {String} message The url to navigate to.
+       */this._onNavigateToMessage=function(message){/*
+           * Handle parent scroll message from child.
+           */if(!_isSafeUrl(message)){return}document.location.href=message};/**
+       * Scroll parent to a given child position.
+       *
+       * @memberof module:pym.Parent
+       * @method _onScrollToChildPosMessage
+       * @inner
+       *
+       * @param {String} message The offset inside the child page.
+       */this._onScrollToChildPosMessage=function(message){// Get the child container position using getBoundingClientRect + pageYOffset
+// via https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
+var iframePos=document.getElementById(this.id).getBoundingClientRect().top+window.pageYOffset;var totalOffset=iframePos+parseInt(message);window.scrollTo(0,totalOffset)};/**
+       * Bind a callback to a given messageType from the child.
+       *
+       * Reserved message names are: "height", "scrollTo" and "navigateTo".
+       *
+       * @memberof module:pym.Parent
+       * @method onMessage
+       * @instance
+       *
+       * @param {String} messageType The type of message being listened for.
+       * @param {module:pym.Parent~onMessageCallback} callback The callback to invoke when a message of the given type is received.
+       */this.onMessage=function(messageType,callback){if(!(messageType in this.messageHandlers)){this.messageHandlers[messageType]=[]}this.messageHandlers[messageType].push(callback)};/**
+       * @callback module:pym.Parent~onMessageCallback
+       * @param {String} message The message data.
+       *//**
+       * Send a message to the the child.
+       *
+       * @memberof module:pym.Parent
+       * @method sendMessage
+       * @instance
+       *
+       * @param {String} messageType The type of message to send.
+       * @param {String} message The message data to send.
+       */this.sendMessage=function(messageType,message){// When used alongside with pjax some references are lost
+if(this.el.getElementsByTagName('iframe').length){if(this.el.getElementsByTagName('iframe')[0].contentWindow){this.el.getElementsByTagName('iframe')[0].contentWindow.postMessage(_makeMessage(this.id,messageType,message),'*')}else{// Contentless child detected remove listeners and iframe
+this.remove()}}};/**
+       * Transmit the current iframe width to the child.
+       *
+       * You shouldn't need to call this directly.
+       *
+       * @memberof module:pym.Parent
+       * @method sendWidth
+       * @instance
+       */this.sendWidth=function(){var width=this.el.offsetWidth.toString();this.sendMessage('width',width)};/**
+       * Transmit the current viewport and iframe position to the child.
+       * Sends viewport width, viewport height
+       * and iframe bounding rect top-left-bottom-right
+       * all separated by spaces
+       *
+       * You shouldn't need to call this directly.
+       *
+       * @memberof module:pym.Parent
+       * @method sendViewportAndIFramePosition
+       * @instance
+       */this.sendViewportAndIFramePosition=function(){var iframeRect=this.iframe.getBoundingClientRect();var vWidth=window.innerWidth||document.documentElement.clientWidth;var vHeight=window.innerHeight||document.documentElement.clientHeight;var payload=vWidth+' '+vHeight;payload+=' '+iframeRect.top+' '+iframeRect.left;payload+=' '+iframeRect.bottom+' '+iframeRect.right;this.sendMessage('viewport-iframe-position',payload)};// Add any overrides to settings coming from config.
+for(var key in config){this.settings[key]=config[key]}/**
+       * Throttled scroll function.
+       *
+       * @memberof module:pym.Parent
+       * @method _throttleOnScroll
+       * @inner
+       */this._throttleOnScroll=_throttle(this._onScroll.bind(this),this.settings.scrollwait);// Bind required message handlers
+this.onMessage('height',this._onHeightMessage);this.onMessage('navigateTo',this._onNavigateToMessage);this.onMessage('scrollToChildPos',this._onScrollToChildPosMessage);this.onMessage('parentPositionInfo',this.sendViewportAndIFramePosition);// Add a listener for processing messages from the child.
+window.addEventListener('message',this._processMessage,false);// Construct the iframe in the container element.
+this._constructIframe();return this};/**
+   * The Child half of a responsive iframe.
+   *
+   * @memberof module:pym
+   * @class Child
+   * @param {Object} [config] Configuration for the child instance. sets {@link module:pym.Child~settings}
+   * @param {function} [config.renderCallback=null] Callback invoked after receiving a resize event from the parent, sets {@link module:pym.Child#settings.renderCallback}
+   * @param {string} [config.xdomain='*'] - xdomain to validate messages received
+   * @param {number} [config.polling=0] - polling frequency in milliseconds to send height to parent
+   * @param {number} [config.id] - parent container id used when navigating the child iframe to a new page but we want to keep it responsive.
+   * @param {string} [config.parenturlparam] - if passed it will be override the default parentUrl query string parameter name expected on the iframe src
+   */lib.Child=function(config){/**
+       * The initial width of the parent page
+       *
+       * @memberof module:pym.Child
+       * @member {string} parentWidth
+       * @inner
+       */this.parentWidth=null;/**
+       * The id of the parent container
+       *
+       * @memberof module:pym.Child
+       * @member {String} id
+       * @inner
+       */this.id=null;/**
+       * The title of the parent page from document.title.
+       *
+       * @memberof module:pym.Child
+       * @member {String} parentTitle
+       * @inner
+       */this.parentTitle=null;/**
+       * The URL of the parent page from window.location.href.
+       *
+       * @memberof module:pym.Child
+       * @member {String} parentUrl
+       * @inner
+       */this.parentUrl=null;/**
+       * The settings for the child instance. Can be overriden by passing a config object to the child constructor
+       * i.e.: var pymChild = new pym.Child({renderCallback: render, xdomain: "\\*\.npr\.org"})
+       *
+       * @memberof module:pym.Child.settings
+       * @member {Object} settings - default settings for the child instance
+       * @inner
+       */this.settings={renderCallback:null,xdomain:'*',polling:0,parenturlparam:'parentUrl'};/**
+       * The timerId in order to be able to stop when polling is enabled
+       *
+       * @memberof module:pym.Child
+       * @member {String} timerId
+       * @inner
+       */this.timerId=null;/**
+       * RegularExpression to validate the received messages
+       *
+       * @memberof module:pym.Child
+       * @member {String} messageRegex
+       * @inner
+       */this.messageRegex=null;/**
+       * Stores the registered messageHandlers for each messageType
+       *
+       * @memberof module:pym.Child
+       * @member {Object} messageHandlers
+       * @inner
+       */this.messageHandlers={};// Ensure a config object
+config=config||{};/**
+       * Bind a callback to a given messageType from the child.
+       *
+       * Reserved message names are: "width".
+       *
+       * @memberof module:pym.Child
+       * @method onMessage
+       * @instance
+       *
+       * @param {String} messageType The type of message being listened for.
+       * @param {module:pym.Child~onMessageCallback} callback The callback to invoke when a message of the given type is received.
+       */this.onMessage=function(messageType,callback){if(!(messageType in this.messageHandlers)){this.messageHandlers[messageType]=[]}this.messageHandlers[messageType].push(callback)};/**
+       * @callback module:pym.Child~onMessageCallback
+       * @param {String} message The message data.
+       *//**
+       * Fire all event handlers for a given message type.
+       *
+       * @memberof module:pym.Child
+       * @method _fire
+       * @inner
+       *
+       * @param {String} messageType The type of message.
+       * @param {String} message The message data.
+       */this._fire=function(messageType,message){/*
+           * Fire all event handlers for a given message type.
+           */if(messageType in this.messageHandlers){for(var i=0;i<this.messageHandlers[messageType].length;i++){this.messageHandlers[messageType][i].call(this,message)}}};/**
+       * Process a new message from the parent.
+       *
+       * @memberof module:pym.Child
+       * @method _processMessage
+       * @inner
+       *
+       * @param {Event} e A message event.
+       */this._processMessage=function(e){/*
+          * Process a new message from parent frame.
+          */// First, punt if this isn't from an acceptable xdomain.
+if(!_isSafeMessage(e,this.settings)){return}// Discard object messages, we only care about strings
+if(typeof e.data!=='string'){return}// Get the message from the parent.
+var match=e.data.match(this.messageRegex);// If there's no match or it's a bad format, punt.
+if(!match||match.length!==3){return}var messageType=match[1];var message=match[2];this._fire(messageType,message)}.bind(this);/**
+       * Resize iframe in response to new width message from parent.
+       *
+       * @memberof module:pym.Child
+       * @method _onWidthMessage
+       * @inner
+       *
+       * @param {String} message The new width.
+       */this._onWidthMessage=function(message){/*
+           * Handle width message from the child.
+           */var width=parseInt(message);// Change the width if it's different.
+if(width!==this.parentWidth){this.parentWidth=width;// Call the callback function if it exists.
+if(this.settings.renderCallback){this.settings.renderCallback(width)}// Send the height back to the parent.
+this.sendHeight()}};/**
+       * Send a message to the the Parent.
+       *
+       * @memberof module:pym.Child
+       * @method sendMessage
+       * @instance
+       *
+       * @param {String} messageType The type of message to send.
+       * @param {String} message The message data to send.
+       */this.sendMessage=function(messageType,message){/*
+           * Send a message to the parent.
+           */window.parent.postMessage(_makeMessage(this.id,messageType,message),'*')};/**
+       * Transmit the current iframe height to the parent.
+       *
+       * Call this directly in cases where you manually alter the height of the iframe contents.
+       *
+       * @memberof module:pym.Child
+       * @method sendHeight
+       * @instance
+       */this.sendHeight=function(){// Get the child's height.
+var height=document.getElementsByTagName('body')[0].offsetHeight.toString();// Send the height to the parent.
+this.sendMessage('height',height);return height}.bind(this);/**
+       * Ask parent to send the current viewport and iframe position information
+       *
+       * @memberof module:pym.Child
+       * @method sendHeight
+       * @instance
+       */this.getParentPositionInfo=function(){// Send the height to the parent.
+this.sendMessage('parentPositionInfo')};/**
+       * Scroll parent to a given element id.
+       *
+       * @memberof module:pym.Child
+       * @method scrollParentTo
+       * @instance
+       *
+       * @param {String} hash The id of the element to scroll to.
+       */this.scrollParentTo=function(hash){this.sendMessage('navigateTo','#'+hash)};/**
+       * Navigate parent to a given url.
+       *
+       * @memberof module:pym.Child
+       * @method navigateParentTo
+       * @instance
+       *
+       * @param {String} url The url to navigate to.
+       */this.navigateParentTo=function(url){this.sendMessage('navigateTo',url)};/**
+       * Scroll parent to a given child element id.
+       *
+       * @memberof module:pym.Child
+       * @method scrollParentToChildEl
+       * @instance
+       *
+       * @param {String} id The id of the child element to scroll to.
+       */this.scrollParentToChildEl=function(id){// Get the child element position using getBoundingClientRect + pageYOffset
+// via https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
+var topPos=document.getElementById(id).getBoundingClientRect().top+window.pageYOffset;this.scrollParentToChildPos(topPos)};/**
+       * Scroll parent to a particular child offset.
+       *
+       * @memberof module:pym.Child
+       * @method scrollParentToChildPos
+       * @instance
+       *
+       * @param {Number} pos The offset of the child element to scroll to.
+       */this.scrollParentToChildPos=function(pos){this.sendMessage('scrollToChildPos',pos.toString())};/**
+       * Mark Whether the child is embedded or not
+       * executes a callback in case it was passed to the config
+       *
+       * @memberof module:pym.Child
+       * @method _markWhetherEmbedded
+       * @inner
+       *
+       * @param {module:pym.Child~onMarkedEmbeddedStatus} The callback to execute after determining whether embedded or not.
+       */var _markWhetherEmbedded=function _markWhetherEmbedded(onMarkedEmbeddedStatus){var htmlElement=document.getElementsByTagName('html')[0],newClassForHtml,originalHtmlClasses=htmlElement.className;try{if(window.self!==window.top){newClassForHtml='embedded'}else{newClassForHtml='not-embedded'}}catch(e){newClassForHtml='embedded'}if(originalHtmlClasses.indexOf(newClassForHtml)<0){htmlElement.className=originalHtmlClasses?originalHtmlClasses+' '+newClassForHtml:newClassForHtml;if(onMarkedEmbeddedStatus){onMarkedEmbeddedStatus(newClassForHtml)}_raiseCustomEvent('marked-embedded')}};/**
+       * @callback module:pym.Child~onMarkedEmbeddedStatus
+       * @param {String} classname "embedded" or "not-embedded".
+       *//**
+       * Unbind child event handlers and timers.
+       *
+       * @memberof module:pym.Child
+       * @method remove
+       * @instance
+       */this.remove=function(){window.removeEventListener('message',this._processMessage);if(this.timerId){clearInterval(this.timerId)}};// Initialize settings with overrides.
+for(var key in config){this.settings[key]=config[key]}// Identify what ID the parent knows this child as.
+this.id=_getParameterByName('childId')||config.id;this.messageRegex=new RegExp('^pym'+MESSAGE_DELIMITER+this.id+MESSAGE_DELIMITER+'(\\S+)'+MESSAGE_DELIMITER+'(.*)$');// Get the initial width from a URL parameter.
+var width=parseInt(_getParameterByName('initialWidth'));// Get the url of the parent frame
+this.parentUrl=_getParameterByName(this.settings.parenturlparam);// Get the title of the parent frame
+this.parentTitle=_getParameterByName('parentTitle');// Bind the required message handlers
+this.onMessage('width',this._onWidthMessage);// Set up a listener to handle any incoming messages.
+window.addEventListener('message',this._processMessage,false);// If there's a callback function, call it.
+if(this.settings.renderCallback){this.settings.renderCallback(width)}// Send the initial height to the parent.
+this.sendHeight();// If we're configured to poll, create a setInterval to handle that.
+if(this.settings.polling){this.timerId=window.setInterval(this.sendHeight,this.settings.polling)}_markWhetherEmbedded(config.onMarkedEmbeddedStatus);return this};// Initialize elements with pym data attributes
+// if we are not in server configuration
+if(typeof document!=='undefined'){lib.autoInit(true)}return lib});
+;
+/*!
+ * hoverIntent v1.10.1 // 2019.10.05 // jQuery v1.7.0+
+ * http://briancherne.github.io/jquery-hoverIntent/
+ *
+ * You may use hoverIntent under the terms of the MIT license. Basically that
+ * means you are free to use hoverIntent as long as this header is left intact.
+ * Copyright 2007-2019 Brian Cherne
+ */
+!function(factory){"use strict";"function"==typeof define&&define.amd?define(["jquery"],factory):"object"==typeof module&&module.exports?module.exports=factory(require("jquery")):jQuery&&!jQuery.fn.hoverIntent&&factory(jQuery)}(function($){"use strict";function track(ev){cX=ev.pageX,cY=ev.pageY}var cX,cY,_cfg={interval:100,sensitivity:6,timeout:0},INSTANCE_COUNT=0,compare=function(ev,$el,s,cfg){if(Math.sqrt((s.pX-cX)*(s.pX-cX)+(s.pY-cY)*(s.pY-cY))<cfg.sensitivity)return $el.off(s.event,track),delete s.timeoutId,s.isActive=!0,ev.pageX=cX,ev.pageY=cY,delete s.pX,delete s.pY,cfg.over.apply($el[0],[ev]);s.pX=cX,s.pY=cY,s.timeoutId=setTimeout(function(){compare(ev,$el,s,cfg)},cfg.interval)};$.fn.hoverIntent=function(handlerIn,handlerOut,selector){var instanceId=INSTANCE_COUNT++,cfg=$.extend({},_cfg);$.isPlainObject(handlerIn)?(cfg=$.extend(cfg,handlerIn),$.isFunction(cfg.out)||(cfg.out=cfg.over)):cfg=$.isFunction(handlerOut)?$.extend(cfg,{over:handlerIn,out:handlerOut,selector:selector}):$.extend(cfg,{over:handlerIn,out:handlerIn,selector:handlerOut});function handleHover(e){var ev=$.extend({},e),$el=$(this),hoverIntentData=$el.data("hoverIntent");hoverIntentData||$el.data("hoverIntent",hoverIntentData={});var state=hoverIntentData[instanceId];state||(hoverIntentData[instanceId]=state={id:instanceId}),state.timeoutId&&(state.timeoutId=clearTimeout(state.timeoutId));var mousemove=state.event="mousemove.hoverIntent.hoverIntent"+instanceId;if("mouseenter"===e.type){if(state.isActive)return;state.pX=ev.pageX,state.pY=ev.pageY,$el.off(mousemove,track).on(mousemove,track),state.timeoutId=setTimeout(function(){compare(ev,$el,state,cfg)},cfg.interval)}else{if(!state.isActive)return;$el.off(mousemove,track),state.timeoutId=setTimeout(function(){!function(ev,$el,s,out){var data=$el.data("hoverIntent");data&&delete data[s.id],out.apply($el[0],[ev])}(ev,$el,state,cfg.out)},cfg.timeout)}}return this.on({"mouseenter.hoverIntent":handleHover,"mouseleave.hoverIntent":handleHover},cfg.selector)}});
+;
+"use strict";// This file can be used for global JS not specific to a particular component.
+(function($){Drupal.behaviors.ponyfillCssVars={attach:function attach(context){// Wait for ponyfill to load.
+var ponyfillLoaded=false,loadPonyfill=setInterval(function(){try{if(cssVars!==undefined&&typeof cssVars==="function"){ponyfillLoaded=true}}catch(error){// Skip printing the error.
+}finally{if(ponyfillLoaded===true){cssVars();clearInterval(loadPonyfill)}}},100)}};// Help make tables responsive
+Drupal.behaviors.ResponsiveCellHeaders={attach:function attach(context){function ResponsiveCellHeaders(table,count){try{var THarray=[];var ths=table.getElementsByTagName("th");for(var i=0;i<ths.length;i++){var headingText=ths[i].innerHTML;THarray.push(headingText)}var styleElm=document.createElement("style"),styleSheet;document.head.appendChild(styleElm);styleSheet=styleElm.sheet;for(var i=0;i<THarray.length;i++){if(THarray[i].length){styleSheet.insertRule(".stacked-row-plus:nth-of-type("+count+")"+" td:nth-child("+(i+1)+")::before {content:\""+THarray[i]+": \";}",styleSheet.cssRules.length)}}}catch(e){console.log("ResponsiveCellHeaders(): "+e)}}var tables=document.getElementsByClassName("stacked-row-plus");var tablesLength=tables.length;for(var i=0;i<tablesLength;i++){ResponsiveCellHeaders(tables[i],i+1)}}};// Accordion implementation for the FAQ list accordion & How Do I.
+Drupal.behaviors.accordion={attach:function attach(context){$(".faq-list__item, .how-do-i__list--accordion .how-do-i__list-item",context).once("accordion").each(function(i,item){var $item=$(item);var isFaq=$item.hasClass("faq-list__item");var classCollapsed=isFaq?"faq-list__item--collapsed":"";var classExpanded=isFaq?"faq-list__item--expanded":"opened";var classExpandIcon=isFaq?".faq-list__icon-wrapper":".how-do-i-list__icon-wrapper";var $expandIcon=$item.find(classExpandIcon);$expandIcon.click(function(){$item.toggleClass(classCollapsed+" "+classExpanded)});$expandIcon.keyup(function(event){if(event.code=="Enter"){$expandIcon.click()}})})}};// Accordion implementation for the How Do I list jump links header.
+Drupal.behaviors.hdiJumpLinksAccordion={attach:function attach(context,settings){$(".how-do-i-step-links__title",context).click(function(){$(this).parent().toggleClass("how-do-i-step-links--expanded")})}};// Pym JS for iFrame micro content.
+Drupal.behaviors.pymJs={attach:function attach(context,settings){$("[id^=\"pym-responsive-iframe-\"]",context).once("pymjs").each(function(){new pym.Parent($(this).attr("id"),$(this).attr("data-src"),{title:$(this).attr("data-pym-title")})})}};Drupal.behaviors.IEDetect={attach:function attach(context,settings){var isIE11=!!navigator.userAgent.match(/Trident.*rv\:11\./);if(isIE11){$("body").addClass("ie11-browser")}}};// Binds click action for admin-feedback form.
+Drupal.behaviors.adminFeedback={attach:function attach(context,settings){$(".block--admin-feedback .feedback-btn").once().each(function(){$(this).click(function(){$(".block--admin-feedback").addClass("clicked")})})}};// Update file icon for dark backgrounds.
+Drupal.behaviors.fileIcon={attach:function attach(context,settings){$(".link-teaser__file-icon-img",context).once().each(function(){// Validates for dark and darker backgrounds.
+if($(this).closest("[data-has-card=\"false\"]").length&&($(this).closest("[data-swatch-role=\"dark-bg\"]").length||$(this).closest("[data-swatch-role=\"darker-bg\"]").length)||// Validates for special case "Accent" background in some palettes.
+$("body.u-palette--stars-stripes, body.u-palette--georgia-pine, "+"body.u-palette--blue-ridge, body.u-palette--augusta-greenway,"+"body.u-palette--labor, body.u-palette--family-children").length&&$(this).closest("[data-has-card=\"false\"]").length&&$(this).closest("[data-swatch-role=\"accent-bg\"]").length){$(this).attr("src",$(this).attr("src").replace("black.svg","white.svg"))}})}}})(jQuery);
+;
+'use strict';(function(document){'use strict';var toggleOfficialSite=function toggleOfficialSite(){document.querySelector('.header-official-site__link').addEventListener('click',function(e){e.preventDefault();this.classList.toggle('header-official-site__link--active');var officialSiteInfo=document.querySelector('.header-official-site__information'),officialSiteInfoStatus=officialSiteInfo.getAttribute('aria-hidden')==='true'?'false':'true';officialSiteInfo.setAttribute('aria-hidden',officialSiteInfoStatus)})};// Wait for content to load.
+var loadOfficialSiteLink=setInterval(function(){if(document.querySelector('.header-official-site__link')!==null){toggleOfficialSite();clearInterval(loadOfficialSiteLink)}},100)})(document);
+;
+'use strict';(function($){'use strict';Drupal.behaviors.mainNavigation={attach:function attach(context){if(context===document){// Shows level 1 item list open by default when on 2nd level and lower pages.
+var expand1stLevelFrom2ndLevelActive=function expand1stLevelFrom2ndLevelActive(){var secondLevelActiveSelector='.header-site-nav__menu-item--level-1.header-site-nav__menu-item--active-trail';var $secondLevelActive=$navigationList.find(secondLevelActiveSelector);if($secondLevelActive.length===1){$secondLevelActive.parent().parent().click()}};// Only first time toggle menu is click, we expand the first level item,
+// if it has second level or deeper items are active.
+var $htmlNoScroll=$('html');var $bodyNoScroll=$('body');var $navigation=$('.header-site-nav-bar');var $navigationList=$('.header-site-nav');var $navigationToggle=$('.header-menu-trigger__button');var $navigationLink=$navigation.find('.header-site-nav__menu-item-link');var $navigationContent=$navigation.find('.header-site-nav-bar__inner');var $subNavigation=$navigation.find('.header-site-nav__menu-item--has-dropdown');var $pageContent=$('.page');var $viewportheight=window.innerHeight;var $tophat=$('.header-top-hat');var $header=$('.header-branding-bar');var $subNavigationLink=void 0;var $subNavigationContents=void 0;$navigationToggle.one('click',expand1stLevelFrom2ndLevelActive);// Toggle classes.
+$navigationToggle.on('click',function(event){event.preventDefault();$navigation.toggleClass('header-site-nav--is-active');$navigationToggle.toggleClass('header-site-nav--is-active');$pageContent.toggleClass('js-menu-screen-overlay--is-active');$htmlNoScroll.toggleClass('js-noscroll');$bodyNoScroll.toggleClass('js-noscroll');// toggle menu
+if($navigation.hasClass('header-site-nav--is-active')){$navigation.css('max-height',$navigationContent.height());// Adjust height of navigation list for scrolling.
+$navigationList.css('height',$viewportheight-($tophat.height()+$header.height()));$('.header-search-form__submit').attr('tabindex','-1');$('.header-search-form__text-input').attr('tabindex','-1')}else{$navigation.css('max-height',0);$('.header-search-form__submit').removeAttr('tabindex');$('.header-search-form__text-input').removeAttr('tabindex')}});// toggle submenu
+$subNavigation.on('click',function(event){// skip if the actual link is the target
+if(event.target!==this){return}// animate if pseudo element is clicked
+else{// initialize variables
+$subNavigationLink=$(this);$subNavigationContents=$subNavigationLink.find('> .header-site-nav__menu-item-list');$subNavigationContents.slideToggle(100,function(){// add classes
+$subNavigationLink.toggleClass('header-site-nav--is-active');$navigation.css('max-height',$navigationContent.height())})}});// Also toggle classes on internal links.
+$navigationLink.on('click',function(event){// When translation is clicked we don't want the menu to go away
+if($(this).attr('id')==='block-googletranslator'){return}$navigation.removeClass('header-site-nav--is-active');$navigationToggle.removeClass('header-site-nav--is-active');$pageContent.removeClass('js-menu-screen-overlay--is-active');$htmlNoScroll.removeClass('js-noscroll');$bodyNoScroll.removeClass('js-noscroll')})}}};Drupal.behaviors.menuFocus={attach:function attach(context){if(context===document){$(function(){setInterval(function(){// Enable / disable Spacing key press scroll.
+if(document.querySelectorAll('.header-site-nav :focus').length>0){window.onkeydown=function(e){return!(e.keyCode==32)}}else{window.onkeydown=function(e){return true}}// Review for mobile links to set tab order.
+var organization=$('.header-site-nav__menu-item-list--level-0 > a.header-utility-wide__agency-selector');if(organization.length){organization.once().blur(function(){$('.header-menu-trigger__button.header-site-nav--is-active').focus()})}$('a.google-translator-switch, a.header-utility-wide__agency-selector').once().focus(function(){$('.header-site-nav__menu-item--has-dropdown').addClass('closed')});// Add / Remove tabindex to search form.
+if(window.innerWidth<1200){$('.header-search-form__submit').once().removeAttr('tabindex');$('.header-search-form__text-input').once().removeAttr('tabindex')}},200);$('.header-site-nav__menu-item--level-0').addClass('closed');$('.page__content a').focus(function(){$('.header-site-nav__menu-item--has-dropdown').addClass('closed')});$('.header-site-nav__menu-item--has-dropdown:last-child > .header-site-nav__menu-item--level-1:last-child a').blur(function(){$('.header-site-nav__menu-item--has-dropdown').addClass('closed')});$('.header-site-nav__menu-item--level-0 > a').focus(function(){$(this).parent().addClass('closed');$('.header-site-nav__menu-item--level-0').addClass('closed')}).blur(function(){$(this).parent().removeClass('closed')}).parent().hoverIntent({sensitivity:2,interval:200,timeout:500,over:function over(){$(this).removeClass('closed')},out:function out(){$(this).addClass('closed')}});$('.header-site-nav__menu-item--has-dropdown a').focus(function(){var that=this;$(this).siblings('.header-site-nav__menu-item-list--level-1').addClass('focused');// Skip navigating header nav dropdowns
+$(this).keyup(function(e){// Press Space.
+if(e.keyCode==32){e.preventDefault();$(that).parent().removeClass('closed')}// Press Escape.
+if(e.keyCode==27){$(this).siblings('.header-site-nav__menu-item-list--level-1').removeClass('focused');$('.header-site-nav__menu-item--has-dropdown a').blur();$('#main-content a')[0].focus()}})}).blur(function(){$(this).siblings('.header-site-nav__menu-item-list--level-1').removeClass('focused')}).parent().hoverIntent({sensitivity:2,interval:200,timeout:500,over:function over(){$(this).removeClass('closed')},out:function out(){$(this).addClass('closed')}})});$('.header-site-nav__menu-item-list--level-1 a').focus(function(){$(this).parents('.header-site-nav__menu-item-list--level-1').addClass('focused')}).blur(function(){$(this).parents('.header-site-nav__menu-item-list--level-1').removeClass('focused')})}}}})(jQuery);
+;
+'use strict';(function($){'use strict';Drupal.behaviors.searchInformationToggle={attach:function attach(context){var $searchToggleOpen=$('.header-search-trigger__button--open',context);var $searchToggleClose=$('.header-search-trigger__button--close',context);var $searchInfoWrapper=$('.header-search-bar',context);var $searchContentInner=$searchInfoWrapper.find('.header-search-bar__inner');var $searchPopularChoice=$searchContentInner.find('.header-search-form__popular-choice:visible');var $searchFormInputWrapper=$searchContentInner.find('.header-search-form__form-input-wrapper');var searchFormInputWrapperWidth=$searchFormInputWrapper.width();$(document).on('SearchApiFederatedSolr::block::autocomplete::suggestionsLoaded',function(e){var $searchAutocomplete=$searchContentInner.find('.js-search-autocomplete-container',context);$searchAutocomplete.css('max-width',searchFormInputWrapperWidth);var autoCompleteHeight=$searchAutocomplete.height();var searchContentInnerHeight=$searchContentInner.height();var searchPopularChoiceHeight=typeof $searchPopularChoice.height==='function'?$searchPopularChoice.height():0;// Default to adding the autocomplete height to existing height.
+var height=searchContentInnerHeight+autoCompleteHeight+'px';// Adjust height if popular choice content is hidden.
+if(autoCompleteHeight>=searchPopularChoiceHeight){height=searchContentInnerHeight-searchPopularChoiceHeight+autoCompleteHeight+'px'}$searchInfoWrapper.css('max-height',height);$searchInfoWrapper.css('height',height);$('.search-autocomplete-container__close-button',context).removeAttr('tabindex')});$(document).on('SearchApiFederatedSolr::block::autocomplete::suggestionsRemoved',function(e){$searchInfoWrapper.css('max-height',$searchContentInner.height()+'px');$searchInfoWrapper.css('height','');$('.search-autocomplete-container__close-button',context).attr('tabindex','-1')});$searchToggleOpen.on('click',function(e){e.preventDefault();$(this).addClass('js-header-search-trigger__button--open');$searchInfoWrapper.addClass('js-header-search-bar--expanded');$searchInfoWrapper.css('max-height',$searchContentInner.height()+'px');$searchInfoWrapper.attr('aria-expanded','true');$searchInfoWrapper.find('.header-search-form__text-input').focus();$('.search-autocomplete-container__close-button',context).attr('tabindex','-1');$searchInfoWrapper.find('.header-search-form__text-input').removeAttr('tabindex');$searchInfoWrapper.find('.header-search-form__submit').removeAttr('tabindex');$searchToggleClose.removeAttr('tabindex');$searchToggleOpen.attr('tabindex','-1')});$searchToggleClose.on('click',function(e){e.preventDefault();$searchToggleOpen.removeClass('js-header-search-trigger__button--open');$searchInfoWrapper.removeClass('js-header-search-bar--expanded');$searchInfoWrapper.css('max-height',0);$searchInfoWrapper.attr('aria-expanded','false');$searchInfoWrapper.find('.header-search-form__text-input').attr('tabindex','-1');$searchInfoWrapper.find('.header-search-form__submit').attr('tabindex','-1');$searchToggleClose.attr('tabindex','-1');$searchToggleOpen.removeAttr('tabindex')});var intervalSearch=setInterval(function(){// Forces to set tabindex to -1 to avoid focus in invisible elements.
+if($('.search-autocomplete-container__close-button',context).length){$searchInfoWrapper.find('.header-search-form__text-input').attr('tabindex','-1');$searchInfoWrapper.find('.header-search-form__submit').attr('tabindex','-1');$searchToggleClose.attr('tabindex','-1');$('.search-autocomplete-container__close-button',context).attr('tabindex','-1');clearInterval(intervalSearch)}},100);$(window).resize(function(){if(window.innerWidth<740){$searchInfoWrapper.removeAttr('style')}})}}})(jQuery);
+;
+'use strict';// Attaches headerUtitlyMover (debounced to 250ms)
+// to the windows resize event,
+// adds an observer to the classes on the html tag
+// and runs headerUtitlyMover on pageload.
+(function toogleAgenciesAndTranslatorLink($){// A utility function to move an element inside another element
+// and add or remove classes.
+$.fn.moveAndSetClass=function($elem,addClass,removeClass){this.each(function(){$(this).removeClass(removeClass).addClass(addClass).appendTo($elem)});return this};var currentBreakpoint=void 0;var previousBreakpoint=void 0;var $header=$('header');var $siteNav=$header.find('.header-site-nav__menu-item-list--level-0');var $headerUtilityWide=$header.find('.header-utility-wide');var $navHeaderAgencySelector=$header.find('.header-utility-wide__agency-selector');var $cssBreakpoints=$header.find('.js-breakpoint-indicators');var $translatorLink=$header.find('.header-utility-wide__language-selector');var $addedClasses='header-site-nav__menu-item-link header-site-nav__menu-item-link--header-link';var breakpointByWidth={'2px':'mobile','1px':'desktop'};var $googleTranslator=false;var translatorSvgHtml=void 0;// Places Translator Link (or Google Translator Element) and
+// the Agency selector Link in $siteNav or $headerUtilityWide
+// based on if it is mobile or desktop.
+function headerUtilityMover(){currentBreakpoint=breakpointByWidth[$cssBreakpoints.css('width')];if(typeof currentBreakpoint==='undefined'){return}if(currentBreakpoint==previousBreakpoint){return}previousBreakpoint=currentBreakpoint;// Google translator element appears only after the user
+// has accepted the "Automatic Translation Disclaimer"
+// When the user accepts the "Automatic Translation Disclaimer"
+// the translator link gets replaced by a Google Translator dropdown
+$googleTranslator=$('#google_translator_element');if(currentBreakpoint=='mobile'){$googleTranslator.length?$siteNav.append($googleTranslator):$translatorLink.moveAndSetClass($siteNav,$addedClasses,'');$navHeaderAgencySelector.moveAndSetClass($siteNav,$addedClasses,'');return}if(currentBreakpoint=='desktop'){$googleTranslator.length?$headerUtilityWide.append($googleTranslator):$translatorLink.moveAndSetClass($headerUtilityWide,'',$addedClasses);$navHeaderAgencySelector.moveAndSetClass($headerUtilityWide,'',$addedClasses);return}}// To check for agencies and translation links position on page load.
+headerUtilityMover();$(document).ready(function(){// Change breakpoint variables on screen resize.
+// Setting resize event to be sure that Drupal.debounce is available.
+// Debounce limits the function from being call every 250ms at most.
+$(window).resize(Drupal.debounce(headerUtilityMover,250));translatorSvgHtml=$('#block-googletranslator svg')[0].outerHTML});var translatorGadgetClass='.goog-te-gadget-simple';// Create an observer instance to know when the page has been translated,
+// or when the Automatic Translation Disclaimer has been accepted.
+var translationObserver=new MutationObserver(function(){// If the Automatic Translation Disclaimer has been accepted
+// we will find a new HTML element with the translatorGadgetClass class,
+// and for styling reasons we are going to add it an SVG, only once.
+if($(translatorGadgetClass).length&&$(translatorGadgetClass).find('svg').length===0){$(translatorGadgetClass).prepend(translatorSvgHtml)}// Only check for the first translation that may occur on pageload,
+// subsequent translation events are not necessary to check as all
+// the links will be already in place.
+if($(document.documentElement).attr('class').match('translated')){previousBreakpoint='';headerUtilityMover();// After page is translated and elements are moved,
+// disconnect. The rest of work happens on resize.
+translationObserver.disconnect()}});translationObserver.observe(document.documentElement,{attributes:true})})(jQuery);
+;
+'use strict';!function(document,Drupal,$){'use strict';/**
+   * Creates behavior for collapsing/expanding side-nav on mobile.
+   */Drupal.behaviors.sideNav={attach:function attach(context){var $sideNavToggle=$('.side-nav__toggle',context);var $sideNavMenu=$('.side-nav',context);// Show menu on toggle click.
+$sideNavToggle.on('click',function(){// Toggles aria-expanded attribute based on whether
+// the side-nav menu is collapsed/expanded.
+if($(this).attr('aria-expanded')==='true'){$(this).attr('aria-expanded','false')}else{$(this).attr('aria-expanded','true')}// Toggle class to expand/collapse side-nav.
+$sideNavMenu.toggleClass('side-nav--is-open')});// Creates function for expanding/collapsing
+// side-nav submenus.
+/**
+       * Bind expand/collapse action to submenu item.
+       * @param {string} subitem - Sub-menu item.
+       * @param {string} button - Toggle button.
+       * @param {context} context - Drupal context.
+       * @return {void}
+       */function sideNavSubMenu(subitem,button,context){var $subItem=$(subitem,context);var $activeItem=$('.side-nav__item',context);// Checks if parent link has class of 'side-nav__item--active'
+// on page load to manipulate aria-expanded value.
+$activeItem.each(function(){if($(this).hasClass('side-nav__item--active')){$(this).find('.side-nav__sub-toggle').attr('aria-expanded','true')}});$subItem.find(button).once().on('click',function(){var $button=$(this);// Toggles 'side-nav__item--active' class
+// on side-nav__item wrapper to be able to
+// expand/collapse submenus.
+$button.parent().toggleClass('side-nav__item--active');// Toggles aria-expanded attribute based on whether
+// the sub-menu is collapsed/expanded.
+if($button.attr('aria-expanded')==='true'){$button.attr('aria-expanded','false');$button.siblings('.side-nav__submenu').find('li a').attr('tabindex','-1')}else{$button.attr('aria-expanded','true');$button.siblings('.side-nav__submenu').find('li a').attr('tabindex','0')}})}// Bind the function to the submenu item.
+sideNavSubMenu('.side-nav__item','.side-nav__sub-toggle',context)}}}(document,Drupal,jQuery);
+;
+'use strict';!function(document,Drupal,$){'use strict';/**
+   * Creates behavior for printing current page.
+   */Drupal.behaviors.printPage={attach:function attach(context){var $printBtn=$('.share-this__print',context);// Print page on button click.
+$printBtn.on('click',function(){window.print();return false})}}}(document,Drupal,jQuery);
+;
+'use strict';(function($){'use strict';Drupal.behaviors.sectionRegionItem={attach:function attach(context){$('.layout-section__region-item',context).each(function(index){if($(this).children('.promo-teaser--text').length>0){$(this).attr('data-has-promo-teaser-text','true')}if($(this).children('.cta-teaser').length>0){$(this).attr('data-has-cta-teaser','true')}if($(this).children('.news-teaser-layout-wrapper--has-images').length>0){$(this).attr('data-has-news-list-with-images','true')}if($(this).children('[role=\'article\']').length>0){$(this).attr('data-has-role-article','true')}if($(this).children('[data-layout=\'aside\']').length>0){$(this).attr('data-has-layout-aside','true')}if($(this).children('[data-layout=\'above\']').length>0){$(this).attr('data-has-layout-above','true')}})}}})(jQuery);
+;
+/**
+ * @file document_link.js
+ */
+(function ($, Drupal) {
+
+  "use strict";
+
+  /**
+   * Ga Document Link custom behavior.
+   */
+  Drupal.behaviors.GaDocumentLinkBehavior = {
+    attach: function (context, settings) {
+      // Make clicks on our ".../download" links trigger a Google Analytics
+      // download event as well.
+      $('a[href$="/download"]', context)
+        .once('ga-document-link-attach-google-analytics-download')
+        .on('click', function (e) {
+          gtag('event', 'DOCUMENT', {
+            event_category: 'Downloads',
+            event_label: Drupal.google_analytics.getPageUrl(this.href),
+            transport_type: 'beacon'
+          });
+        });
+    }
+
+  };
+
+}(jQuery, Drupal));
+;
+/**
+* DO NOT EDIT THIS FILE.
+* See the following change record for more information,
+* https://www.drupal.org/node/2815083
+* @preserve
+**/
+
+(function ($, Drupal) {
+  Drupal.theme.progressBar = function (id) {
+    return '<div id="' + id + '" class="progress" aria-live="polite">' + '<div class="progress__label">&nbsp;</div>' + '<div class="progress__track"><div class="progress__bar"></div></div>' + '<div class="progress__percentage"></div>' + '<div class="progress__description">&nbsp;</div>' + '</div>';
+  };
+
+  Drupal.ProgressBar = function (id, updateCallback, method, errorCallback) {
+    this.id = id;
+    this.method = method || 'GET';
+    this.updateCallback = updateCallback;
+    this.errorCallback = errorCallback;
+
+    this.element = $(Drupal.theme('progressBar', id));
+  };
+
+  $.extend(Drupal.ProgressBar.prototype, {
+    setProgress: function setProgress(percentage, message, label) {
+      if (percentage >= 0 && percentage <= 100) {
+        $(this.element).find('div.progress__bar').css('width', percentage + '%');
+        $(this.element).find('div.progress__percentage').html(percentage + '%');
+      }
+      $('div.progress__description', this.element).html(message);
+      $('div.progress__label', this.element).html(label);
+      if (this.updateCallback) {
+        this.updateCallback(percentage, message, this);
+      }
+    },
+    startMonitoring: function startMonitoring(uri, delay) {
+      this.delay = delay;
+      this.uri = uri;
+      this.sendPing();
+    },
+    stopMonitoring: function stopMonitoring() {
+      clearTimeout(this.timer);
+
+      this.uri = null;
+    },
+    sendPing: function sendPing() {
+      if (this.timer) {
+        clearTimeout(this.timer);
+      }
+      if (this.uri) {
+        var pb = this;
+
+        var uri = this.uri;
+        if (uri.indexOf('?') === -1) {
+          uri += '?';
+        } else {
+          uri += '&';
+        }
+        uri += '_format=json';
+        $.ajax({
+          type: this.method,
+          url: uri,
+          data: '',
+          dataType: 'json',
+          success: function success(progress) {
+            if (progress.status === 0) {
+              pb.displayError(progress.data);
+              return;
+            }
+
+            pb.setProgress(progress.percentage, progress.message, progress.label);
+
+            pb.timer = setTimeout(function () {
+              pb.sendPing();
+            }, pb.delay);
+          },
+          error: function error(xmlhttp) {
+            var e = new Drupal.AjaxError(xmlhttp, pb.uri);
+            pb.displayError('<pre>' + e.message + '</pre>');
+          }
+        });
+      }
+    },
+    displayError: function displayError(string) {
+      var error = $('<div class="messages messages--error"></div>').html(string);
+      $(this.element).before(error).hide();
+
+      if (this.errorCallback) {
+        this.errorCallback(this);
+      }
+    }
+  });
+})(jQuery, Drupal);;
+/**
+* DO NOT EDIT THIS FILE.
+* See the following change record for more information,
+* https://www.drupal.org/node/2815083
+* @preserve
+**/
+function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) { arr2[i] = arr[i]; } return arr2; } else { return Array.from(arr); } }
+
+(function ($, window, Drupal, drupalSettings) {
+  Drupal.behaviors.AJAX = {
+    attach: function attach(context, settings) {
+      function loadAjaxBehavior(base) {
+        var elementSettings = settings.ajax[base];
+        if (typeof elementSettings.selector === 'undefined') {
+          elementSettings.selector = '#' + base;
+        }
+        $(elementSettings.selector).once('drupal-ajax').each(function () {
+          elementSettings.element = this;
+          elementSettings.base = base;
+          Drupal.ajax(elementSettings);
+        });
+      }
+
+      Object.keys(settings.ajax || {}).forEach(function (base) {
+        return loadAjaxBehavior(base);
+      });
+
+      Drupal.ajax.bindAjaxLinks(document.body);
+
+      $('.use-ajax-submit').once('ajax').each(function () {
+        var elementSettings = {};
+
+        elementSettings.url = $(this.form).attr('action');
+
+        elementSettings.setClick = true;
+
+        elementSettings.event = 'click';
+
+        elementSettings.progress = { type: 'throbber' };
+        elementSettings.base = $(this).attr('id');
+        elementSettings.element = this;
+
+        Drupal.ajax(elementSettings);
+      });
+    },
+    detach: function detach(context, settings, trigger) {
+      if (trigger === 'unload') {
+        Drupal.ajax.expired().forEach(function (instance) {
+          Drupal.ajax.instances[instance.instanceIndex] = null;
+        });
+      }
+    }
+  };
+
+  Drupal.AjaxError = function (xmlhttp, uri, customMessage) {
+    var statusCode = void 0;
+    var statusText = void 0;
+    var responseText = void 0;
+    if (xmlhttp.status) {
+      statusCode = '\n' + Drupal.t('An AJAX HTTP error occurred.') + '\n' + Drupal.t('HTTP Result Code: !status', {
+        '!status': xmlhttp.status
+      });
+    } else {
+      statusCode = '\n' + Drupal.t('An AJAX HTTP request terminated abnormally.');
+    }
+    statusCode += '\n' + Drupal.t('Debugging information follows.');
+    var pathText = '\n' + Drupal.t('Path: !uri', { '!uri': uri });
+    statusText = '';
+
+    try {
+      statusText = '\n' + Drupal.t('StatusText: !statusText', {
+        '!statusText': $.trim(xmlhttp.statusText)
+      });
+    } catch (e) {}
+
+    responseText = '';
+
+    try {
+      responseText = '\n' + Drupal.t('ResponseText: !responseText', {
+        '!responseText': $.trim(xmlhttp.responseText)
+      });
+    } catch (e) {}
+
+    responseText = responseText.replace(/<("[^"]*"|'[^']*'|[^'">])*>/gi, '');
+    responseText = responseText.replace(/[\n]+\s+/g, '\n');
+
+    var readyStateText = xmlhttp.status === 0 ? '\n' + Drupal.t('ReadyState: !readyState', {
+      '!readyState': xmlhttp.readyState
+    }) : '';
+
+    customMessage = customMessage ? '\n' + Drupal.t('CustomMessage: !customMessage', {
+      '!customMessage': customMessage
+    }) : '';
+
+    this.message = statusCode + pathText + statusText + customMessage + responseText + readyStateText;
+
+    this.name = 'AjaxError';
+  };
+
+  Drupal.AjaxError.prototype = new Error();
+  Drupal.AjaxError.prototype.constructor = Drupal.AjaxError;
+
+  Drupal.ajax = function (settings) {
+    if (arguments.length !== 1) {
+      throw new Error('Drupal.ajax() function must be called with one configuration object only');
+    }
+
+    var base = settings.base || false;
+    var element = settings.element || false;
+    delete settings.base;
+    delete settings.element;
+
+    if (!settings.progress && !element) {
+      settings.progress = false;
+    }
+
+    var ajax = new Drupal.Ajax(base, element, settings);
+    ajax.instanceIndex = Drupal.ajax.instances.length;
+    Drupal.ajax.instances.push(ajax);
+
+    return ajax;
+  };
+
+  Drupal.ajax.instances = [];
+
+  Drupal.ajax.expired = function () {
+    return Drupal.ajax.instances.filter(function (instance) {
+      return instance && instance.element !== false && !document.body.contains(instance.element);
+    });
+  };
+
+  Drupal.ajax.bindAjaxLinks = function (element) {
+    $(element).find('.use-ajax').once('ajax').each(function (i, ajaxLink) {
+      var $linkElement = $(ajaxLink);
+
+      var elementSettings = {
+        progress: { type: 'throbber' },
+        dialogType: $linkElement.data('dialog-type'),
+        dialog: $linkElement.data('dialog-options'),
+        dialogRenderer: $linkElement.data('dialog-renderer'),
+        base: $linkElement.attr('id'),
+        element: ajaxLink
+      };
+      var href = $linkElement.attr('href');
+
+      if (href) {
+        elementSettings.url = href;
+        elementSettings.event = 'click';
+      }
+      Drupal.ajax(elementSettings);
+    });
+  };
+
+  Drupal.Ajax = function (base, element, elementSettings) {
+    var defaults = {
+      event: element ? 'mousedown' : null,
+      keypress: true,
+      selector: base ? '#' + base : null,
+      effect: 'none',
+      speed: 'none',
+      method: 'replaceWith',
+      progress: {
+        type: 'throbber',
+        message: Drupal.t('Please wait...')
+      },
+      submit: {
+        js: true
+      }
+    };
+
+    $.extend(this, defaults, elementSettings);
+
+    this.commands = new Drupal.AjaxCommands();
+
+    this.instanceIndex = false;
+
+    if (this.wrapper) {
+      this.wrapper = '#' + this.wrapper;
+    }
+
+    this.element = element;
+
+    this.element_settings = elementSettings;
+
+    this.elementSettings = elementSettings;
+
+    if (this.element && this.element.form) {
+      this.$form = $(this.element.form);
+    }
+
+    if (!this.url) {
+      var $element = $(this.element);
+      if ($element.is('a')) {
+        this.url = $element.attr('href');
+      } else if (this.element && element.form) {
+        this.url = this.$form.attr('action');
+      }
+    }
+
+    var originalUrl = this.url;
+
+    this.url = this.url.replace(/\/nojs(\/|$|\?|#)/, '/ajax$1');
+
+    if (drupalSettings.ajaxTrustedUrl[originalUrl]) {
+      drupalSettings.ajaxTrustedUrl[this.url] = true;
+    }
+
+    var ajax = this;
+
+    ajax.options = {
+      url: ajax.url,
+      data: ajax.submit,
+      beforeSerialize: function beforeSerialize(elementSettings, options) {
+        return ajax.beforeSerialize(elementSettings, options);
+      },
+      beforeSubmit: function beforeSubmit(formValues, elementSettings, options) {
+        ajax.ajaxing = true;
+        return ajax.beforeSubmit(formValues, elementSettings, options);
+      },
+      beforeSend: function beforeSend(xmlhttprequest, options) {
+        ajax.ajaxing = true;
+        return ajax.beforeSend(xmlhttprequest, options);
+      },
+      success: function success(response, status, xmlhttprequest) {
+        if (typeof response === 'string') {
+          response = $.parseJSON(response);
+        }
+
+        if (response !== null && !drupalSettings.ajaxTrustedUrl[ajax.url]) {
+          if (xmlhttprequest.getResponseHeader('X-Drupal-Ajax-Token') !== '1') {
+            var customMessage = Drupal.t('The response failed verification so will not be processed.');
+            return ajax.error(xmlhttprequest, ajax.url, customMessage);
+          }
+        }
+
+        return ajax.success(response, status);
+      },
+      complete: function complete(xmlhttprequest, status) {
+        ajax.ajaxing = false;
+        if (status === 'error' || status === 'parsererror') {
+          return ajax.error(xmlhttprequest, ajax.url);
+        }
+      },
+
+      dataType: 'json',
+      jsonp: false,
+      type: 'POST'
+    };
+
+    if (elementSettings.dialog) {
+      ajax.options.data.dialogOptions = elementSettings.dialog;
+    }
+
+    if (ajax.options.url.indexOf('?') === -1) {
+      ajax.options.url += '?';
+    } else {
+      ajax.options.url += '&';
+    }
+
+    var wrapper = 'drupal_' + (elementSettings.dialogType || 'ajax');
+    if (elementSettings.dialogRenderer) {
+      wrapper += '.' + elementSettings.dialogRenderer;
+    }
+    ajax.options.url += Drupal.ajax.WRAPPER_FORMAT + '=' + wrapper;
+
+    $(ajax.element).on(elementSettings.event, function (event) {
+      if (!drupalSettings.ajaxTrustedUrl[ajax.url] && !Drupal.url.isLocal(ajax.url)) {
+        throw new Error(Drupal.t('The callback URL is not local and not trusted: !url', {
+          '!url': ajax.url
+        }));
+      }
+      return ajax.eventResponse(this, event);
+    });
+
+    if (elementSettings.keypress) {
+      $(ajax.element).on('keypress', function (event) {
+        return ajax.keypressResponse(this, event);
+      });
+    }
+
+    if (elementSettings.prevent) {
+      $(ajax.element).on(elementSettings.prevent, false);
+    }
+  };
+
+  Drupal.ajax.WRAPPER_FORMAT = '_wrapper_format';
+
+  Drupal.Ajax.AJAX_REQUEST_PARAMETER = '_drupal_ajax';
+
+  Drupal.Ajax.prototype.execute = function () {
+    if (this.ajaxing) {
+      return;
+    }
+
+    try {
+      this.beforeSerialize(this.element, this.options);
+
+      return $.ajax(this.options);
+    } catch (e) {
+      this.ajaxing = false;
+      window.alert('An error occurred while attempting to process ' + this.options.url + ': ' + e.message);
+
+      return $.Deferred().reject();
+    }
+  };
+
+  Drupal.Ajax.prototype.keypressResponse = function (element, event) {
+    var ajax = this;
+
+    if (event.which === 13 || event.which === 32 && element.type !== 'text' && element.type !== 'textarea' && element.type !== 'tel' && element.type !== 'number') {
+      event.preventDefault();
+      event.stopPropagation();
+      $(element).trigger(ajax.elementSettings.event);
+    }
+  };
+
+  Drupal.Ajax.prototype.eventResponse = function (element, event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    var ajax = this;
+
+    if (ajax.ajaxing) {
+      return;
+    }
+
+    try {
+      if (ajax.$form) {
+        if (ajax.setClick) {
+          element.form.clk = element;
+        }
+
+        ajax.$form.ajaxSubmit(ajax.options);
+      } else {
+        ajax.beforeSerialize(ajax.element, ajax.options);
+        $.ajax(ajax.options);
+      }
+    } catch (e) {
+      ajax.ajaxing = false;
+      window.alert('An error occurred while attempting to process ' + ajax.options.url + ': ' + e.message);
+    }
+  };
+
+  Drupal.Ajax.prototype.beforeSerialize = function (element, options) {
+    if (this.$form && document.body.contains(this.$form.get(0))) {
+      var settings = this.settings || drupalSettings;
+      Drupal.detachBehaviors(this.$form.get(0), settings, 'serialize');
+    }
+
+    options.data[Drupal.Ajax.AJAX_REQUEST_PARAMETER] = 1;
+
+    var pageState = drupalSettings.ajaxPageState;
+    options.data['ajax_page_state[theme]'] = pageState.theme;
+    options.data['ajax_page_state[theme_token]'] = pageState.theme_token;
+    options.data['ajax_page_state[libraries]'] = pageState.libraries;
+  };
+
+  Drupal.Ajax.prototype.beforeSubmit = function (formValues, element, options) {};
+
+  Drupal.Ajax.prototype.beforeSend = function (xmlhttprequest, options) {
+    if (this.$form) {
+      options.extraData = options.extraData || {};
+
+      options.extraData.ajax_iframe_upload = '1';
+
+      var v = $.fieldValue(this.element);
+      if (v !== null) {
+        options.extraData[this.element.name] = v;
+      }
+    }
+
+    $(this.element).prop('disabled', true);
+
+    if (!this.progress || !this.progress.type) {
+      return;
+    }
+
+    var progressIndicatorMethod = 'setProgressIndicator' + this.progress.type.slice(0, 1).toUpperCase() + this.progress.type.slice(1).toLowerCase();
+    if (progressIndicatorMethod in this && typeof this[progressIndicatorMethod] === 'function') {
+      this[progressIndicatorMethod].call(this);
+    }
+  };
+
+  Drupal.theme.ajaxProgressThrobber = function (message) {
+    var messageMarkup = typeof message === 'string' ? Drupal.theme('ajaxProgressMessage', message) : '';
+    var throbber = '<div class="throbber">&nbsp;</div>';
+
+    return '<div class="ajax-progress ajax-progress-throbber">' + throbber + messageMarkup + '</div>';
+  };
+
+  Drupal.theme.ajaxProgressIndicatorFullscreen = function () {
+    return '<div class="ajax-progress ajax-progress-fullscreen">&nbsp;</div>';
+  };
+
+  Drupal.theme.ajaxProgressMessage = function (message) {
+    return '<div class="message">' + message + '</div>';
+  };
+
+  Drupal.theme.ajaxProgressBar = function ($element) {
+    return $('<div class="ajax-progress ajax-progress-bar"></div>').append($element);
+  };
+
+  Drupal.Ajax.prototype.setProgressIndicatorBar = function () {
+    var progressBar = new Drupal.ProgressBar('ajax-progress-' + this.element.id, $.noop, this.progress.method, $.noop);
+    if (this.progress.message) {
+      progressBar.setProgress(-1, this.progress.message);
+    }
+    if (this.progress.url) {
+      progressBar.startMonitoring(this.progress.url, this.progress.interval || 1500);
+    }
+    this.progress.element = $(Drupal.theme('ajaxProgressBar', progressBar.element));
+    this.progress.object = progressBar;
+    $(this.element).after(this.progress.element);
+  };
+
+  Drupal.Ajax.prototype.setProgressIndicatorThrobber = function () {
+    this.progress.element = $(Drupal.theme('ajaxProgressThrobber', this.progress.message));
+    $(this.element).after(this.progress.element);
+  };
+
+  Drupal.Ajax.prototype.setProgressIndicatorFullscreen = function () {
+    this.progress.element = $(Drupal.theme('ajaxProgressIndicatorFullscreen'));
+    $('body').append(this.progress.element);
+  };
+
+  Drupal.Ajax.prototype.success = function (response, status) {
+    var _this = this;
+
+    if (this.progress.element) {
+      $(this.progress.element).remove();
+    }
+    if (this.progress.object) {
+      this.progress.object.stopMonitoring();
+    }
+    $(this.element).prop('disabled', false);
+
+    var elementParents = $(this.element).parents('[data-drupal-selector]').addBack().toArray();
+
+    var focusChanged = false;
+    Object.keys(response || {}).forEach(function (i) {
+      if (response[i].command && _this.commands[response[i].command]) {
+        _this.commands[response[i].command](_this, response[i], status);
+        if (response[i].command === 'invoke' && response[i].method === 'focus') {
+          focusChanged = true;
+        }
+      }
+    });
+
+    if (!focusChanged && this.element && !$(this.element).data('disable-refocus')) {
+      var target = false;
+
+      for (var n = elementParents.length - 1; !target && n >= 0; n--) {
+        target = document.querySelector('[data-drupal-selector="' + elementParents[n].getAttribute('data-drupal-selector') + '"]');
+      }
+
+      if (target) {
+        $(target).trigger('focus');
+      }
+    }
+
+    if (this.$form && document.body.contains(this.$form.get(0))) {
+      var settings = this.settings || drupalSettings;
+      Drupal.attachBehaviors(this.$form.get(0), settings);
+    }
+
+    this.settings = null;
+  };
+
+  Drupal.Ajax.prototype.getEffect = function (response) {
+    var type = response.effect || this.effect;
+    var speed = response.speed || this.speed;
+
+    var effect = {};
+    if (type === 'none') {
+      effect.showEffect = 'show';
+      effect.hideEffect = 'hide';
+      effect.showSpeed = '';
+    } else if (type === 'fade') {
+      effect.showEffect = 'fadeIn';
+      effect.hideEffect = 'fadeOut';
+      effect.showSpeed = speed;
+    } else {
+      effect.showEffect = type + 'Toggle';
+      effect.hideEffect = type + 'Toggle';
+      effect.showSpeed = speed;
+    }
+
+    return effect;
+  };
+
+  Drupal.Ajax.prototype.error = function (xmlhttprequest, uri, customMessage) {
+    if (this.progress.element) {
+      $(this.progress.element).remove();
+    }
+    if (this.progress.object) {
+      this.progress.object.stopMonitoring();
+    }
+
+    $(this.wrapper).show();
+
+    $(this.element).prop('disabled', false);
+
+    if (this.$form && document.body.contains(this.$form.get(0))) {
+      var settings = this.settings || drupalSettings;
+      Drupal.attachBehaviors(this.$form.get(0), settings);
+    }
+    throw new Drupal.AjaxError(xmlhttprequest, uri, customMessage);
+  };
+
+  Drupal.theme.ajaxWrapperNewContent = function ($newContent, ajax, response) {
+    return (response.effect || ajax.effect) !== 'none' && $newContent.filter(function (i) {
+      return !($newContent[i].nodeName === '#comment' || $newContent[i].nodeName === '#text' && /^(\s|\n|\r)*$/.test($newContent[i].textContent));
+    }).length > 1 ? Drupal.theme('ajaxWrapperMultipleRootElements', $newContent) : $newContent;
+  };
+
+  Drupal.theme.ajaxWrapperMultipleRootElements = function ($elements) {
+    return $('<div></div>').append($elements);
+  };
+
+  Drupal.AjaxCommands = function () {};
+  Drupal.AjaxCommands.prototype = {
+    insert: function insert(ajax, response) {
+      var $wrapper = response.selector ? $(response.selector) : $(ajax.wrapper);
+      var method = response.method || ajax.method;
+      var effect = ajax.getEffect(response);
+
+      var settings = response.settings || ajax.settings || drupalSettings;
+
+      var $newContent = $($.parseHTML(response.data, document, true));
+
+      $newContent = Drupal.theme('ajaxWrapperNewContent', $newContent, ajax, response);
+
+      switch (method) {
+        case 'html':
+        case 'replaceWith':
+        case 'replaceAll':
+        case 'empty':
+        case 'remove':
+          Drupal.detachBehaviors($wrapper.get(0), settings);
+          break;
+        default:
+          break;
+      }
+
+      $wrapper[method]($newContent);
+
+      if (effect.showEffect !== 'show') {
+        $newContent.hide();
+      }
+
+      var $ajaxNewContent = $newContent.find('.ajax-new-content');
+      if ($ajaxNewContent.length) {
+        $ajaxNewContent.hide();
+        $newContent.show();
+        $ajaxNewContent[effect.showEffect](effect.showSpeed);
+      } else if (effect.showEffect !== 'show') {
+        $newContent[effect.showEffect](effect.showSpeed);
+      }
+
+      if ($newContent.parents('html').length) {
+        $newContent.each(function (index, element) {
+          if (element.nodeType === Node.ELEMENT_NODE) {
+            Drupal.attachBehaviors(element, settings);
+          }
+        });
+      }
+    },
+    remove: function remove(ajax, response, status) {
+      var settings = response.settings || ajax.settings || drupalSettings;
+      $(response.selector).each(function () {
+        Drupal.detachBehaviors(this, settings);
+      }).remove();
+    },
+    changed: function changed(ajax, response, status) {
+      var $element = $(response.selector);
+      if (!$element.hasClass('ajax-changed')) {
+        $element.addClass('ajax-changed');
+        if (response.asterisk) {
+          $element.find(response.asterisk).append(' <abbr class="ajax-changed" title="' + Drupal.t('Changed') + '">*</abbr> ');
+        }
+      }
+    },
+    alert: function alert(ajax, response, status) {
+      window.alert(response.text, response.title);
+    },
+    announce: function announce(ajax, response) {
+      if (response.priority) {
+        Drupal.announce(response.text, response.priority);
+      } else {
+        Drupal.announce(response.text);
+      }
+    },
+    redirect: function redirect(ajax, response, status) {
+      window.location = response.url;
+    },
+    css: function css(ajax, response, status) {
+      $(response.selector).css(response.argument);
+    },
+    settings: function settings(ajax, response, status) {
+      var ajaxSettings = drupalSettings.ajax;
+
+      if (ajaxSettings) {
+        Drupal.ajax.expired().forEach(function (instance) {
+
+          if (instance.selector) {
+            var selector = instance.selector.replace('#', '');
+            if (selector in ajaxSettings) {
+              delete ajaxSettings[selector];
+            }
+          }
+        });
+      }
+
+      if (response.merge) {
+        $.extend(true, drupalSettings, response.settings);
+      } else {
+        ajax.settings = response.settings;
+      }
+    },
+    data: function data(ajax, response, status) {
+      $(response.selector).data(response.name, response.value);
+    },
+    invoke: function invoke(ajax, response, status) {
+      var $element = $(response.selector);
+      $element[response.method].apply($element, _toConsumableArray(response.args));
+    },
+    restripe: function restripe(ajax, response, status) {
+      $(response.selector).find('> tbody > tr:visible, > tr:visible').removeClass('odd even').filter(':even').addClass('odd').end().filter(':odd').addClass('even');
+    },
+    update_build_id: function update_build_id(ajax, response, status) {
+      $('input[name="form_build_id"][value="' + response.old + '"]').val(response.new);
+    },
+    add_css: function add_css(ajax, response, status) {
+      $('head').prepend(response.data);
+    },
+    message: function message(ajax, response) {
+      var messages = new Drupal.Message(document.querySelector(response.messageWrapperQuerySelector));
+      if (response.clearPrevious) {
+        messages.clear();
+      }
+      messages.add(response.message, response.messageOptions);
+    }
+  };
+})(jQuery, window, Drupal, drupalSettings);;
+/**
+* DO NOT EDIT THIS FILE.
+* See the following change record for more information,
+* https://www.drupal.org/node/2815083
+* @preserve
+**/
+
+(function (Drupal) {
+  Drupal.theme.ajaxProgressBar = function ($element) {
+    return $element.addClass('ajax-progress ajax-progress-bar');
+  };
+})(Drupal);;
+/**
+ * @File
+ * Javascript for the Admin Feedback module.
+ */
+
+(function ($, Drupal, drupalSettings) {
+  $( document ).ready(function() {
+    $(".feedback-btn").click(function (event) {
+      var yesResponse = drupalSettings.admin_feedback.yes_response;
+      var noResponse = drupalSettings.admin_feedback.no_response;
+      var feedbackPromptOnYes = drupalSettings.admin_feedback.feedback_prompt_on_yes;
+      var feedbackPromptOnNo = drupalSettings.admin_feedback.feedback_prompt_on_no;
+      var customTextResponseOnNo = (drupalSettings.admin_feedback.custom_text_response_on_no) ? drupalSettings.admin_feedback.custom_text_response_on_no.value : '';
+      var feedbackPrompt = drupalSettings.admin_feedback.feedback_prompt;
+      var feedbackEnablePredefinedAnswers = drupalSettings.admin_feedback.feedback_enable_predefined_answers;
+      var nodeId = $(this).data('node-id');
+      var feedback = $(this).data('feedback');
+      var langCode = drupalSettings.path.currentLanguage;
+      if (customTextResponseOnNo === null) {
+        customTextResponseOnNo = '<p></p>';
+      }
+
+      $("#edit-feedback-send").prop("disabled", true);
+      if (feedbackEnablePredefinedAnswers === true) {
+        $("#feedback-msg-answers").click(function() {
+          if ($("#feedback-msg-answers input").is(":checked")) {
+            $("#edit-feedback-send").prop("disabled", false);
+            $("#edit-feedback-send").css("cursor", "pointer");
+          }
+        });
+      } else {
+        $('#edit-feedback-message').val('');
+        $('#edit-feedback-message').keyup(function () {
+          if ($(this).val() != '') {
+            $('#edit-feedback-send').prop('disabled', false);
+            $('#edit-feedback-send').css('cursor', 'pointer');
+          } else if ($(this).val() == '') {
+            $('#edit-feedback-send').prop('disabled', true);
+            $('#edit-feedback-send').css('cursor', 'not-allowed');
+          }
+        });
+      }
+
+      if (feedback == 'yes') {
+        if (feedbackPromptOnYes === true) {
+          $('#upper-feedback-content').replaceWith('<h2>' + yesResponse + '</h2>');
+          if (feedbackEnablePredefinedAnswers === true) {
+            $('#feedback-msg-answers legend').text(feedbackPrompt);
+          } else {
+            $('#edit-feedback-label').text(feedbackPrompt);
+          }
+          $('#admin-feedback-form').css('display', 'block');
+        } else {
+          $('#upper-feedback-content').replaceWith('<h2>' + yesResponse + '</h2>');
+        }
+      } else if (feedback == 'no') {
+        if (feedbackPromptOnNo === true) {
+          $('#upper-feedback-content').replaceWith('<h2>' + noResponse + '</h2>');
+          if (feedbackEnablePredefinedAnswers === true) {
+            $('#feedback-msg-answers legend').text(feedbackPrompt);
+          } else {
+            $('#edit-feedback-label').text(feedbackPrompt);
+          }
+          $('#admin-feedback-form').css('display', 'block');
+        } else {
+          $('#upper-feedback-content').replaceWith('<h2>' + noResponse + '</h2>' + customTextResponseOnNo);
+        }
+      }
+
+      var langPrefix = drupalSettings.path.pathPrefix === drupalSettings.path.currentLanguage + '/'
+        ? '/' + drupalSettings.path.currentLanguage
+        : '';
+
+      $.ajax({
+        type: "POST",
+        url: langPrefix + "/feedback_vote",
+        data: {"vote": feedback, "node_id": nodeId},
+        success: function (data) {
+          $('#feedback-id').val(data[0]);
+        },
+      });
+    });
+  });
+})(jQuery, Drupal, drupalSettings);
+;
+/*!
+ * jQuery Form Plugin
+ * version: 4.2.2
+ * Requires jQuery v1.7.2 or later
+ * Project repository: https://github.com/jquery-form/form
+
+ * Copyright 2017 Kevin Morris
+ * Copyright 2006 M. Alsup
+
+ * Dual licensed under the LGPL-2.1+ or MIT licenses
+ * https://github.com/jquery-form/form#license
+
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ */
+!function(e){"function"==typeof define&&define.amd?define(["jquery"],e):"object"==typeof module&&module.exports?module.exports=function(t,r){return void 0===r&&(r="undefined"!=typeof window?require("jquery"):require("jquery")(t)),e(r),r}:e(jQuery)}(function(e){"use strict";function t(t){var r=t.data;t.isDefaultPrevented()||(t.preventDefault(),e(t.target).closest("form").ajaxSubmit(r))}function r(t){var r=t.target,a=e(r);if(!a.is("[type=submit],[type=image]")){var n=a.closest("[type=submit]");if(0===n.length)return;r=n[0]}var i=r.form;if(i.clk=r,"image"===r.type)if(void 0!==t.offsetX)i.clk_x=t.offsetX,i.clk_y=t.offsetY;else if("function"==typeof e.fn.offset){var o=a.offset();i.clk_x=t.pageX-o.left,i.clk_y=t.pageY-o.top}else i.clk_x=t.pageX-r.offsetLeft,i.clk_y=t.pageY-r.offsetTop;setTimeout(function(){i.clk=i.clk_x=i.clk_y=null},100)}function a(){if(e.fn.ajaxSubmit.debug){var t="[jquery.form] "+Array.prototype.join.call(arguments,"");window.console&&window.console.log?window.console.log(t):window.opera&&window.opera.postError&&window.opera.postError(t)}}var n=/\r?\n/g,i={};i.fileapi=void 0!==e('<input type="file">').get(0).files,i.formdata=void 0!==window.FormData;var o=!!e.fn.prop;e.fn.attr2=function(){if(!o)return this.attr.apply(this,arguments);var e=this.prop.apply(this,arguments);return e&&e.jquery||"string"==typeof e?e:this.attr.apply(this,arguments)},e.fn.ajaxSubmit=function(t,r,n,s){function u(r){var a,n,i=e.param(r,t.traditional).split("&"),o=i.length,s=[];for(a=0;a<o;a++)i[a]=i[a].replace(/\+/g," "),n=i[a].split("="),s.push([decodeURIComponent(n[0]),decodeURIComponent(n[1])]);return s}function c(r){function n(e){var t=null;try{e.contentWindow&&(t=e.contentWindow.document)}catch(e){a("cannot get iframe.contentWindow document: "+e)}if(t)return t;try{t=e.contentDocument?e.contentDocument:e.document}catch(r){a("cannot get iframe.contentDocument: "+r),t=e.document}return t}function i(){function t(){try{var e=n(v).readyState;a("state = "+e),e&&"uninitialized"===e.toLowerCase()&&setTimeout(t,50)}catch(e){a("Server abort: ",e," (",e.name,")"),s(L),j&&clearTimeout(j),j=void 0}}var r=p.attr2("target"),i=p.attr2("action"),o=p.attr("enctype")||p.attr("encoding")||"multipart/form-data";w.setAttribute("target",m),l&&!/post/i.test(l)||w.setAttribute("method","POST"),i!==f.url&&w.setAttribute("action",f.url),f.skipEncodingOverride||l&&!/post/i.test(l)||p.attr({encoding:"multipart/form-data",enctype:"multipart/form-data"}),f.timeout&&(j=setTimeout(function(){T=!0,s(A)},f.timeout));var u=[];try{if(f.extraData)for(var c in f.extraData)f.extraData.hasOwnProperty(c)&&(e.isPlainObject(f.extraData[c])&&f.extraData[c].hasOwnProperty("name")&&f.extraData[c].hasOwnProperty("value")?u.push(e('<input type="hidden" name="'+f.extraData[c].name+'">',k).val(f.extraData[c].value).appendTo(w)[0]):u.push(e('<input type="hidden" name="'+c+'">',k).val(f.extraData[c]).appendTo(w)[0]));f.iframeTarget||h.appendTo(D),v.attachEvent?v.attachEvent("onload",s):v.addEventListener("load",s,!1),setTimeout(t,15);try{w.submit()}catch(e){document.createElement("form").submit.apply(w)}}finally{w.setAttribute("action",i),w.setAttribute("enctype",o),r?w.setAttribute("target",r):p.removeAttr("target"),e(u).remove()}}function s(t){if(!x.aborted&&!X){if((O=n(v))||(a("cannot access response document"),t=L),t===A&&x)return x.abort("timeout"),void S.reject(x,"timeout");if(t===L&&x)return x.abort("server abort"),void S.reject(x,"error","server abort");if(O&&O.location.href!==f.iframeSrc||T){v.detachEvent?v.detachEvent("onload",s):v.removeEventListener("load",s,!1);var r,i="success";try{if(T)throw"timeout";var o="xml"===f.dataType||O.XMLDocument||e.isXMLDoc(O);if(a("isXml="+o),!o&&window.opera&&(null===O.body||!O.body.innerHTML)&&--C)return a("requeing onLoad callback, DOM not available"),void setTimeout(s,250);var u=O.body?O.body:O.documentElement;x.responseText=u?u.innerHTML:null,x.responseXML=O.XMLDocument?O.XMLDocument:O,o&&(f.dataType="xml"),x.getResponseHeader=function(e){return{"content-type":f.dataType}[e.toLowerCase()]},u&&(x.status=Number(u.getAttribute("status"))||x.status,x.statusText=u.getAttribute("statusText")||x.statusText);var c=(f.dataType||"").toLowerCase(),l=/(json|script|text)/.test(c);if(l||f.textarea){var p=O.getElementsByTagName("textarea")[0];if(p)x.responseText=p.value,x.status=Number(p.getAttribute("status"))||x.status,x.statusText=p.getAttribute("statusText")||x.statusText;else if(l){var m=O.getElementsByTagName("pre")[0],g=O.getElementsByTagName("body")[0];m?x.responseText=m.textContent?m.textContent:m.innerText:g&&(x.responseText=g.textContent?g.textContent:g.innerText)}}else"xml"===c&&!x.responseXML&&x.responseText&&(x.responseXML=q(x.responseText));try{M=N(x,c,f)}catch(e){i="parsererror",x.error=r=e||i}}catch(e){a("error caught: ",e),i="error",x.error=r=e||i}x.aborted&&(a("upload aborted"),i=null),x.status&&(i=x.status>=200&&x.status<300||304===x.status?"success":"error"),"success"===i?(f.success&&f.success.call(f.context,M,"success",x),S.resolve(x.responseText,"success",x),d&&e.event.trigger("ajaxSuccess",[x,f])):i&&(void 0===r&&(r=x.statusText),f.error&&f.error.call(f.context,x,i,r),S.reject(x,"error",r),d&&e.event.trigger("ajaxError",[x,f,r])),d&&e.event.trigger("ajaxComplete",[x,f]),d&&!--e.active&&e.event.trigger("ajaxStop"),f.complete&&f.complete.call(f.context,x,i),X=!0,f.timeout&&clearTimeout(j),setTimeout(function(){f.iframeTarget?h.attr("src",f.iframeSrc):h.remove(),x.responseXML=null},100)}}}var u,c,f,d,m,h,v,x,y,b,T,j,w=p[0],S=e.Deferred();if(S.abort=function(e){x.abort(e)},r)for(c=0;c<g.length;c++)u=e(g[c]),o?u.prop("disabled",!1):u.removeAttr("disabled");(f=e.extend(!0,{},e.ajaxSettings,t)).context=f.context||f,m="jqFormIO"+(new Date).getTime();var k=w.ownerDocument,D=p.closest("body");if(f.iframeTarget?(b=(h=e(f.iframeTarget,k)).attr2("name"))?m=b:h.attr2("name",m):(h=e('<iframe name="'+m+'" src="'+f.iframeSrc+'" />',k)).css({position:"absolute",top:"-1000px",left:"-1000px"}),v=h[0],x={aborted:0,responseText:null,responseXML:null,status:0,statusText:"n/a",getAllResponseHeaders:function(){},getResponseHeader:function(){},setRequestHeader:function(){},abort:function(t){var r="timeout"===t?"timeout":"aborted";a("aborting upload... "+r),this.aborted=1;try{v.contentWindow.document.execCommand&&v.contentWindow.document.execCommand("Stop")}catch(e){}h.attr("src",f.iframeSrc),x.error=r,f.error&&f.error.call(f.context,x,r,t),d&&e.event.trigger("ajaxError",[x,f,r]),f.complete&&f.complete.call(f.context,x,r)}},(d=f.global)&&0==e.active++&&e.event.trigger("ajaxStart"),d&&e.event.trigger("ajaxSend",[x,f]),f.beforeSend&&!1===f.beforeSend.call(f.context,x,f))return f.global&&e.active--,S.reject(),S;if(x.aborted)return S.reject(),S;(y=w.clk)&&(b=y.name)&&!y.disabled&&(f.extraData=f.extraData||{},f.extraData[b]=y.value,"image"===y.type&&(f.extraData[b+".x"]=w.clk_x,f.extraData[b+".y"]=w.clk_y));var A=1,L=2,F=e("meta[name=csrf-token]").attr("content"),E=e("meta[name=csrf-param]").attr("content");E&&F&&(f.extraData=f.extraData||{},f.extraData[E]=F),f.forceSync?i():setTimeout(i,10);var M,O,X,C=50,q=e.parseXML||function(e,t){return window.ActiveXObject?((t=new ActiveXObject("Microsoft.XMLDOM")).async="false",t.loadXML(e)):t=(new DOMParser).parseFromString(e,"text/xml"),t&&t.documentElement&&"parsererror"!==t.documentElement.nodeName?t:null},_=e.parseJSON||function(e){return window.eval("("+e+")")},N=function(t,r,a){var n=t.getResponseHeader("content-type")||"",i=("xml"===r||!r)&&n.indexOf("xml")>=0,o=i?t.responseXML:t.responseText;return i&&"parsererror"===o.documentElement.nodeName&&e.error&&e.error("parsererror"),a&&a.dataFilter&&(o=a.dataFilter(o,r)),"string"==typeof o&&(("json"===r||!r)&&n.indexOf("json")>=0?o=_(o):("script"===r||!r)&&n.indexOf("javascript")>=0&&e.globalEval(o)),o};return S}if(!this.length)return a("ajaxSubmit: skipping submit process - no element selected"),this;var l,f,d,p=this;"function"==typeof t?t={success:t}:"string"==typeof t||!1===t&&arguments.length>0?(t={url:t,data:r,dataType:n},"function"==typeof s&&(t.success=s)):void 0===t&&(t={}),l=t.method||t.type||this.attr2("method"),(d=(d="string"==typeof(f=t.url||this.attr2("action"))?e.trim(f):"")||window.location.href||"")&&(d=(d.match(/^([^#]+)/)||[])[1]),t=e.extend(!0,{url:d,success:e.ajaxSettings.success,type:l||e.ajaxSettings.type,iframeSrc:/^https/i.test(window.location.href||"")?"javascript:false":"about:blank"},t);var m={};if(this.trigger("form-pre-serialize",[this,t,m]),m.veto)return a("ajaxSubmit: submit vetoed via form-pre-serialize trigger"),this;if(t.beforeSerialize&&!1===t.beforeSerialize(this,t))return a("ajaxSubmit: submit aborted via beforeSerialize callback"),this;var h=t.traditional;void 0===h&&(h=e.ajaxSettings.traditional);var v,g=[],x=this.formToArray(t.semantic,g,t.filtering);if(t.data){var y=e.isFunction(t.data)?t.data(x):t.data;t.extraData=y,v=e.param(y,h)}if(t.beforeSubmit&&!1===t.beforeSubmit(x,this,t))return a("ajaxSubmit: submit aborted via beforeSubmit callback"),this;if(this.trigger("form-submit-validate",[x,this,t,m]),m.veto)return a("ajaxSubmit: submit vetoed via form-submit-validate trigger"),this;var b=e.param(x,h);v&&(b=b?b+"&"+v:v),"GET"===t.type.toUpperCase()?(t.url+=(t.url.indexOf("?")>=0?"&":"?")+b,t.data=null):t.data=b;var T=[];if(t.resetForm&&T.push(function(){p.resetForm()}),t.clearForm&&T.push(function(){p.clearForm(t.includeHidden)}),!t.dataType&&t.target){var j=t.success||function(){};T.push(function(r,a,n){var i=arguments,o=t.replaceTarget?"replaceWith":"html";e(t.target)[o](r).each(function(){j.apply(this,i)})})}else t.success&&(e.isArray(t.success)?e.merge(T,t.success):T.push(t.success));if(t.success=function(e,r,a){for(var n=t.context||this,i=0,o=T.length;i<o;i++)T[i].apply(n,[e,r,a||p,p])},t.error){var w=t.error;t.error=function(e,r,a){var n=t.context||this;w.apply(n,[e,r,a,p])}}if(t.complete){var S=t.complete;t.complete=function(e,r){var a=t.context||this;S.apply(a,[e,r,p])}}var k=e("input[type=file]:enabled",this).filter(function(){return""!==e(this).val()}).length>0,D="multipart/form-data",A=p.attr("enctype")===D||p.attr("encoding")===D,L=i.fileapi&&i.formdata;a("fileAPI :"+L);var F,E=(k||A)&&!L;!1!==t.iframe&&(t.iframe||E)?t.closeKeepAlive?e.get(t.closeKeepAlive,function(){F=c(x)}):F=c(x):F=(k||A)&&L?function(r){for(var a=new FormData,n=0;n<r.length;n++)a.append(r[n].name,r[n].value);if(t.extraData){var i=u(t.extraData);for(n=0;n<i.length;n++)i[n]&&a.append(i[n][0],i[n][1])}t.data=null;var o=e.extend(!0,{},e.ajaxSettings,t,{contentType:!1,processData:!1,cache:!1,type:l||"POST"});t.uploadProgress&&(o.xhr=function(){var r=e.ajaxSettings.xhr();return r.upload&&r.upload.addEventListener("progress",function(e){var r=0,a=e.loaded||e.position,n=e.total;e.lengthComputable&&(r=Math.ceil(a/n*100)),t.uploadProgress(e,a,n,r)},!1),r}),o.data=null;var s=o.beforeSend;return o.beforeSend=function(e,r){t.formData?r.data=t.formData:r.data=a,s&&s.call(this,e,r)},e.ajax(o)}(x):e.ajax(t),p.removeData("jqxhr").data("jqxhr",F);for(var M=0;M<g.length;M++)g[M]=null;return this.trigger("form-submit-notify",[this,t]),this},e.fn.ajaxForm=function(n,i,o,s){if(("string"==typeof n||!1===n&&arguments.length>0)&&(n={url:n,data:i,dataType:o},"function"==typeof s&&(n.success=s)),n=n||{},n.delegation=n.delegation&&e.isFunction(e.fn.on),!n.delegation&&0===this.length){var u={s:this.selector,c:this.context};return!e.isReady&&u.s?(a("DOM not ready, queuing ajaxForm"),e(function(){e(u.s,u.c).ajaxForm(n)}),this):(a("terminating; zero elements found by selector"+(e.isReady?"":" (DOM not ready)")),this)}return n.delegation?(e(document).off("submit.form-plugin",this.selector,t).off("click.form-plugin",this.selector,r).on("submit.form-plugin",this.selector,n,t).on("click.form-plugin",this.selector,n,r),this):this.ajaxFormUnbind().on("submit.form-plugin",n,t).on("click.form-plugin",n,r)},e.fn.ajaxFormUnbind=function(){return this.off("submit.form-plugin click.form-plugin")},e.fn.formToArray=function(t,r,a){var n=[];if(0===this.length)return n;var o,s=this[0],u=this.attr("id"),c=t||void 0===s.elements?s.getElementsByTagName("*"):s.elements;if(c&&(c=e.makeArray(c)),u&&(t||/(Edge|Trident)\//.test(navigator.userAgent))&&(o=e(':input[form="'+u+'"]').get()).length&&(c=(c||[]).concat(o)),!c||!c.length)return n;e.isFunction(a)&&(c=e.map(c,a));var l,f,d,p,m,h,v;for(l=0,h=c.length;l<h;l++)if(m=c[l],(d=m.name)&&!m.disabled)if(t&&s.clk&&"image"===m.type)s.clk===m&&(n.push({name:d,value:e(m).val(),type:m.type}),n.push({name:d+".x",value:s.clk_x},{name:d+".y",value:s.clk_y}));else if((p=e.fieldValue(m,!0))&&p.constructor===Array)for(r&&r.push(m),f=0,v=p.length;f<v;f++)n.push({name:d,value:p[f]});else if(i.fileapi&&"file"===m.type){r&&r.push(m);var g=m.files;if(g.length)for(f=0;f<g.length;f++)n.push({name:d,value:g[f],type:m.type});else n.push({name:d,value:"",type:m.type})}else null!==p&&void 0!==p&&(r&&r.push(m),n.push({name:d,value:p,type:m.type,required:m.required}));if(!t&&s.clk){var x=e(s.clk),y=x[0];(d=y.name)&&!y.disabled&&"image"===y.type&&(n.push({name:d,value:x.val()}),n.push({name:d+".x",value:s.clk_x},{name:d+".y",value:s.clk_y}))}return n},e.fn.formSerialize=function(t){return e.param(this.formToArray(t))},e.fn.fieldSerialize=function(t){var r=[];return this.each(function(){var a=this.name;if(a){var n=e.fieldValue(this,t);if(n&&n.constructor===Array)for(var i=0,o=n.length;i<o;i++)r.push({name:a,value:n[i]});else null!==n&&void 0!==n&&r.push({name:this.name,value:n})}}),e.param(r)},e.fn.fieldValue=function(t){for(var r=[],a=0,n=this.length;a<n;a++){var i=this[a],o=e.fieldValue(i,t);null===o||void 0===o||o.constructor===Array&&!o.length||(o.constructor===Array?e.merge(r,o):r.push(o))}return r},e.fieldValue=function(t,r){var a=t.name,i=t.type,o=t.tagName.toLowerCase();if(void 0===r&&(r=!0),r&&(!a||t.disabled||"reset"===i||"button"===i||("checkbox"===i||"radio"===i)&&!t.checked||("submit"===i||"image"===i)&&t.form&&t.form.clk!==t||"select"===o&&-1===t.selectedIndex))return null;if("select"===o){var s=t.selectedIndex;if(s<0)return null;for(var u=[],c=t.options,l="select-one"===i,f=l?s+1:c.length,d=l?s:0;d<f;d++){var p=c[d];if(p.selected&&!p.disabled){var m=p.value;if(m||(m=p.attributes&&p.attributes.value&&!p.attributes.value.specified?p.text:p.value),l)return m;u.push(m)}}return u}return e(t).val().replace(n,"\r\n")},e.fn.clearForm=function(t){return this.each(function(){e("input,select,textarea",this).clearFields(t)})},e.fn.clearFields=e.fn.clearInputs=function(t){var r=/^(?:color|date|datetime|email|month|number|password|range|search|tel|text|time|url|week)$/i;return this.each(function(){var a=this.type,n=this.tagName.toLowerCase();r.test(a)||"textarea"===n?this.value="":"checkbox"===a||"radio"===a?this.checked=!1:"select"===n?this.selectedIndex=-1:"file"===a?/MSIE/.test(navigator.userAgent)?e(this).replaceWith(e(this).clone(!0)):e(this).val(""):t&&(!0===t&&/hidden/.test(a)||"string"==typeof t&&e(this).is(t))&&(this.value="")})},e.fn.resetForm=function(){return this.each(function(){var t=e(this),r=this.tagName.toLowerCase();switch(r){case"input":this.checked=this.defaultChecked;case"textarea":return this.value=this.defaultValue,!0;case"option":case"optgroup":var a=t.parents("select");return a.length&&a[0].multiple?"option"===r?this.selected=this.defaultSelected:t.find("option").resetForm():a.resetForm(),!0;case"select":return t.find("option").each(function(e){if(this.selected=this.defaultSelected,this.defaultSelected&&!t[0].multiple)return t[0].selectedIndex=e,!1}),!0;case"label":var n=e(t.attr("for")),i=t.find("input,select,textarea");return n[0]&&i.unshift(n[0]),i.resetForm(),!0;case"form":return("function"==typeof this.reset||"object"==typeof this.reset&&!this.reset.nodeType)&&this.reset(),!0;default:return t.find("form,input,label,select,textarea").resetForm(),!0}})},e.fn.enable=function(e){return void 0===e&&(e=!0),this.each(function(){this.disabled=!e})},e.fn.selected=function(t){return void 0===t&&(t=!0),this.each(function(){var r=this.type;if("checkbox"===r||"radio"===r)this.checked=t;else if("option"===this.tagName.toLowerCase()){var a=e(this).parent("select");t&&a[0]&&"select-one"===a[0].type&&a.find("option").selected(!1),this.selected=t}})},e.fn.ajaxSubmit.debug=!1});
+
+;
+/**
+* DO NOT EDIT THIS FILE.
+* See the following change record for more information,
+* https://www.drupal.org/node/2815083
+* @preserve
+**/
+
+(function (Drupal, debounce) {
+  var liveElement = void 0;
+  var announcements = [];
+
+  Drupal.behaviors.drupalAnnounce = {
+    attach: function attach(context) {
+      if (!liveElement) {
+        liveElement = document.createElement('div');
+        liveElement.id = 'drupal-live-announce';
+        liveElement.className = 'visually-hidden';
+        liveElement.setAttribute('aria-live', 'polite');
+        liveElement.setAttribute('aria-busy', 'false');
+        document.body.appendChild(liveElement);
+      }
+    }
+  };
+
+  function announce() {
+    var text = [];
+    var priority = 'polite';
+    var announcement = void 0;
+
+    var il = announcements.length;
+    for (var i = 0; i < il; i++) {
+      announcement = announcements.pop();
+      text.unshift(announcement.text);
+
+      if (announcement.priority === 'assertive') {
+        priority = 'assertive';
+      }
+    }
+
+    if (text.length) {
+      liveElement.innerHTML = '';
+
+      liveElement.setAttribute('aria-busy', 'true');
+
+      liveElement.setAttribute('aria-live', priority);
+
+      liveElement.innerHTML = text.join('\n');
+
+      liveElement.setAttribute('aria-busy', 'false');
+    }
+  }
+
+  Drupal.announce = function (text, priority) {
+    announcements.push({
+      text: text,
+      priority: priority
+    });
+
+    return debounce(announce, 200)();
+  };
+})(Drupal, Drupal.debounce);;
+/**
+ * @file
+ * Adds autocomplete functionality to search_api_solr_federated block form.
+ */
+(function($, Drupal, drupalSettings) {
+  "use strict";
+
+  var autocomplete = {};
+
+  /**
+   * Polyfill for Object.assign
+   * @see: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/assign#Polyfill
+   */
+  if (typeof Object.assign != 'function') {
+    // Must be writable: true, enumerable: false, configurable: true
+    Object.defineProperty(Object, "assign", {
+      value: function assign(target, varArgs) { // .length of function is 2
+        'use strict';
+        if (target == null) { // TypeError if undefined or null
+          throw new TypeError('Cannot convert undefined or null to object');
+        }
+
+        var to = Object(target);
+
+        for (var index = 1; index < arguments.length; index++) {
+          var nextSource = arguments[index];
+
+          if (nextSource != null) { // Skip over if undefined or null
+            for (var nextKey in nextSource) {
+              // Avoid bugs when hasOwnProperty is shadowed
+              if (Object.prototype.hasOwnProperty.call(nextSource, nextKey)) {
+                to[nextKey] = nextSource[nextKey];
+              }
+            }
+          }
+        }
+        return to;
+      },
+      writable: true,
+      configurable: true
+    });
+  }
+
+  /**
+   * Attaches our custom autocomplete settings to the search_api_federated_solr block search form field.
+   *
+   * @type {Drupal~behavior}
+   *
+   * @prop {Drupal~behaviorAttach} attach
+   *   Attaches the autocomplete behaviors.
+   */
+  Drupal.behaviors.searchApiFederatedSolrAutocomplete = {
+    attach: function attach(context, settings) {
+      // Find our fields with autocomplete settings
+      $(context)
+        .find(".js-search-api-federated-solr-block-form-autocomplete #edit-search")
+        .once("search-api-federated-solr-autocomplete-search")
+        .each(function() {
+          // Halt execution if we don't have the required config.
+          if (
+            !Object.hasOwnProperty.call(
+                drupalSettings,
+                "searchApiFederatedSolr"
+            ) ||
+            !Object.hasOwnProperty.call(
+                drupalSettings.searchApiFederatedSolr,
+                "block"
+            ) ||
+            !Object.hasOwnProperty.call(
+                drupalSettings.searchApiFederatedSolr.block,
+                "autocomplete"
+            ) ||
+            !Object.hasOwnProperty.call(
+                drupalSettings.searchApiFederatedSolr.block.autocomplete,
+                "url"
+            )
+          ) {
+            return;
+          }
+          // Set default settings.
+          var defaultSettings = {
+            isEnabled: false,
+            appendWildcard: false,
+            userpass: "",
+            numChars: 2,
+            suggestionRows: 5,
+            mode: "result",
+            result: {
+              titleText: "What are you looking for?",
+              hideDirectionsText: 0
+            }
+          };
+          // Get passed in config from block config.
+          var config = drupalSettings.searchApiFederatedSolr.block.autocomplete;
+          // Merge defaults with passed in config.
+          var options = Object.assign({}, defaultSettings, config);
+          // Set scaffolding markup for suggestions container
+          var suggestionsContainerScaffoldingMarkup = '<div class="js-search-autocomplete-container search-autocomplete-container visually-hidden"><div class="search-autocomplete-container__title">'.concat(
+                options[options.mode].titleText,
+                '<button class="js-search-autocomplete-container__close-button search-autocomplete-container__close-button">x</button></div><div id="js-search-autocomplete search-autocomplete"><ul id="res" role="listbox" tabindex="-1" aria-label="' + Drupal.t("Suggested search results") + '"></ul></div>'
+          );
+
+          if (!options[options.mode].hideDirectionsText) {
+            suggestionsContainerScaffoldingMarkup +=
+                '<div class="search-autocomplete-container__directions"><span class="search-autocomplete-container__directions-item">Press <code>ENTER</code> to search for your current term or <code>ESC</code> to close.</span><span class="search-autocomplete-container__directions-item">Press \u2191 and \u2193 to highlight a suggestion then <code>ENTER</code> to be redirected to that suggestion.</span></div>';
+          }
+
+          suggestionsContainerScaffoldingMarkup += "</div>";
+
+          // Cache selectors.
+          var $input = $(this);
+          var $form = $("#federated-search-page-block-form");
+          // Set up input with attributes, suggestions scaffolding.
+          $input
+              .attr("role", "combobox")
+              .attr("aria-owns", "res")
+              .attr("aria-autocomplete", "list")
+              .attr("aria-expanded", "false");
+          $(suggestionsContainerScaffoldingMarkup).insertAfter($input);
+          // Cache inserted selectors.
+          var $results = $("#res");
+          var $autocompleteContainer = $(".js-search-autocomplete-container");
+          var $closeButton = $(
+              ".js-search-autocomplete-container__close-button"
+          );
+
+          // Initiate helper vars.
+          var current;
+          var counter = 1;
+          var keys = {
+            ESC: 27,
+            TAB: 9,
+            RETURN: 13,
+            UP: 38,
+            DOWN: 40
+          };
+
+          // Determine param values for any set default filters/facets.
+          var defaultParams = "";
+          $('input[type="hidden"]', $form).each(function(index, input) {
+            var fq = $(input).attr("name") + ':("' + $(input).val() + '")';
+            defaultParams += "&fq=" + encodeURI(fq);
+          });
+          // Set defaultParams from configuration.
+          if (options.sm_site_name) {
+            defaultParams += "&fq=sm_site_name:" + options.sm_site_name;
+          }
+          var urlWithDefaultParams = options.url + defaultParams;
+
+          // Bind events to input.
+          $input.on("input", function(event) {
+            doSearch(options.suggestionRows);
+          });
+
+          $input.on("keydown", function(event) {
+            doKeypress(keys, event);
+          });
+
+          // Define event handlers.
+          function doSearch(suggestionRows) {
+            $input.removeAttr("aria-activedescendant");
+            var value = $input.val();
+            // Remove spaces on either end of the value.
+            var trimmed = value.trim();
+            // Default to the trimmed value.
+            var query = trimmed;
+            // If the current value has more than the configured number of characters.
+            if (query.length > options.numChars) {
+              // Append wildcard to the query if configured to do so.
+              if (options.appendWildcard) {
+                // Note: syntax for wildcard query depends on the query endpoint
+                if (options.proxyIsDisabled) {
+                  // One method of supporting search-as-you-type is to append a wildcard '*'
+                  //   to match zero or more additional characters at the end of the users search term.
+                  // @see: https://lucene.apache.org/solr/guide/6_6/the-standard-query-parser.html#TheStandardQueryParser-WildcardSearches
+                  // @see: https://opensourceconnections.com/blog/2013/06/07/search-as-you-type-with-solr/
+                  // Split into word chunks.
+                  var words = trimmed.split(" ");
+                  // If there are multiple chunks, join them with "+", repeat the last word + append "*".
+                  if (words.length > 1) {
+                    query = words.join("+") + words.pop() + "*";
+                  }
+                  else {
+                    // If there is only 1 word, repeat it an append "*".
+                    query = words + "+" + words + "*";
+                  }
+                }
+                else {
+                  query = trimmed + "*";
+                }
+              }
+
+              // Replace the placeholder with the query value.
+              var url = urlWithDefaultParams.replace(/(\[val\])/gi, query);
+
+              // Set up basic auth if we need  it.
+              var xhrFields = {};
+              var headers = {};
+
+              if (options.userpass) {
+                xhrFields = {
+                  withCredentials: true
+                };
+                headers = {
+                  Authorization: "Basic " + options.userpass
+                };
+              }
+              // Make the ajax request
+              $.ajax({
+                  xhrFields: xhrFields,
+                  headers: headers,
+                  url: url,
+                  dataType: "json"
+                })
+                // Currently we only support the response structure from Solr:
+                // {
+                //    response: {
+                //      docs: [
+                //        {
+                //        ss_federated_title: <result title as link text>,
+                //        ss_url: <result url as link href>,
+                //        }
+                //      ]
+                //    }
+                // }
+                // @todo provide hook for transform function to be passed in
+                //   via Drupal.settings then all it here.
+                .done(function(results) {
+                  if (results.response.docs.length >= 1) {
+                    // Remove all suggestions
+                    $(".js-autocomplete-suggestion").remove();
+                    $autocompleteContainer.removeClass("visually-hidden");
+                    $("#search-autocomplete").append("");
+                    $input.attr("aria-expanded", "true");
+                    counter = 1;
+
+                    // Bind click event for close button
+                    $closeButton.on("click", function(event) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      $input.removeAttr("aria-activedescendant");
+
+                      // Remove all suggestions
+                      $(".js-autocomplete-suggestion").remove();
+                      $autocompleteContainer.addClass("visually-hidden");
+                      $input.attr("aria-expanded", "false");
+                      $input.focus();
+
+                      // Emit a custom events for removing.
+                      $(document).trigger("SearchApiFederatedSolr::block::autocomplete::suggestionsRemoved", [{}]);
+                    });
+                    // Get first [suggestionRows] results
+                    var limitedResults = results.response.docs.slice(0, suggestionRows);
+                    limitedResults.forEach(function(item) {
+                      // Highlight query chars in returned title
+                      var pattern = new RegExp(trimmed, "gi");
+                      var highlighted = item.ss_federated_title.replace(
+                          pattern,
+                          function(string) {
+                            return "<strong>" + string + "</strong>";
+                          }
+                      );
+                      // Default the URL to the passed ss_url.
+                      var href = item.ss_url;
+                      // Ensure that the result returned for the item from solr
+                      // (via proxy or directly) is assigned an absolute URL.
+                      if (!options.directUrl) {
+                        // Initialize url to compute from solr sm_urls array.
+                        var sm_url;
+                        // Use the canonical url.
+                        if (Array.isArray(item.sm_urls)) {
+                          sm_url = item.sm_urls[0];
+                        }
+                        // If no valid urls are passed from solr, skip this item.
+                        if (!sm_url) {
+                          return;
+                        }
+                        // Override the current href value.
+                        href = sm_url;
+                      }
+
+                      //Add results to the list
+                      var $suggestionTemplate = "<li role='option' tabindex='-1' class='js-autocomplete-suggestion autocomplete-suggestion' id='suggestion-"
+                          .concat(counter, "'><a class='js-autocomplete-suggestion__link autocomplete-suggestion__link' href='")
+                          .concat(href, "'>")
+                          .concat(highlighted, "</a><span class='visually-hidden'>(")
+                          .concat(counter, " of ")
+                          .concat(limitedResults.length, ")</span></li>");
+                      $results.append($suggestionTemplate);
+                      counter = counter + 1;
+                    });
+
+                    // On link click, emit an event whose data can be used to write to analytics, etc.
+                    $(".js-autocomplete-suggestion__link").on("click", function(e) {
+                      $(document).trigger("SearchApiFederatedSolr::block::autocomplete::selection",
+                        [
+                          {
+                            referrer: $(location).attr("href"),
+                            target: $(this).attr("href"),
+                            term: $input.val()
+                          }
+                        ]
+                      );
+                    });
+
+                    // Emit a custom events for results.
+                    $(document).trigger("SearchApiFederatedSolr::block::autocomplete::suggestionsLoaded", [{}]);
+
+                    // Announce the number of suggestions.
+                    var number = $results.children('[role="option"]').length;
+
+                    if (number >= 1) {
+                      Drupal.announce(
+                          Drupal.t(
+                              number +
+                              " suggestions displayed. To navigate use up and down arrow keys."
+                          )
+                      );
+                    }
+                  }
+                  else {
+                    // No results, remove suggestions and hide container
+                    $(".js-autocomplete-suggestion").remove();
+                    $autocompleteContainer.addClass("visually-hidden");
+                    $input.attr("aria-expanded", "false");
+
+                    // Emit a custom events for removing.
+                    $(document).trigger("SearchApiFederatedSolr::block::autocomplete::suggestionsRemoved", [{}]);
+                  }
+                });
+            }
+            else {
+              // Remove suggestions and hide container
+              $(".js-autocomplete-suggestion").remove();
+              $autocompleteContainer.addClass("visually-hidden");
+              $input.attr("aria-expanded", "false");
+
+              // Emit a custom events for removing.
+              $(document).trigger("SearchApiFederatedSolr::block::autocomplete::suggestionsRemoved", [{}]);
+            }
+          }
+
+          function doKeypress(keys, event) {
+            var $suggestions = $(".js-autocomplete-suggestion");
+            var highlighted = false;
+            highlighted = $results.children("div").hasClass("highlight");
+
+            switch (event.which) {
+              case keys.ESC:
+                event.preventDefault();
+                event.stopPropagation();
+                $input.removeAttr("aria-activedescendant");
+                $suggestions.remove();
+                $autocompleteContainer.addClass("visually-hidden");
+                $input.attr("aria-expanded", "false");
+                break;
+
+              case keys.TAB:
+                $input.removeAttr("aria-activedescendant");
+                $suggestions.remove();
+                $autocompleteContainer.addClass("visually-hidden");
+                $input.attr("aria-expanded", "false");
+                break;
+
+              case keys.RETURN:
+                if (highlighted) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return selectOption(
+                      highlighted,
+                      $(".highlight")
+                          .find("a")
+                          .attr("href")
+                  );
+                }
+                else {
+                  $form.submit();
+                  return false;
+                }
+
+                break;
+
+              case keys.UP:
+                event.preventDefault();
+                event.stopPropagation();
+                return moveUp(highlighted);
+                break;
+
+              case keys.DOWN:
+                event.preventDefault();
+                event.stopPropagation();
+                return moveDown(highlighted);
+                break;
+
+              default:
+                return;
+            }
+          }
+
+          function moveUp(highlighted) {
+            $input.removeAttr("aria-activedescendant");
+
+            // if highlighted exists and if the highlighted item is not the first option
+            if (highlighted && !$results.children().first("div").hasClass("highlight")) {
+              removeCurrent();
+              current.prev("div").addClass("highlight").attr("aria-selected", true);
+              $input.attr("aria-activedescendant", current.prev("div").attr("id"));
+            }
+            else {
+              // Go to bottom of list
+              removeCurrent();
+              current = $results.children().last("div");
+              current.addClass("highlight").attr("aria-selected", true);
+              $input.attr("aria-activedescendant", current.attr("id"));
+            }
+          }
+
+          function moveDown(highlighted) {
+            $input.removeAttr("aria-activedescendant");
+
+            // if highlighted exists and if the highlighted item is not the last option
+            if (highlighted && !$results.children().last("div").hasClass("highlight")) {
+              removeCurrent();
+              current.next("div").addClass("highlight").attr("aria-selected", true);
+              $input.attr("aria-activedescendant", current.next("div").attr("id"));
+            }
+            else {
+              // Go to top of list
+              removeCurrent();
+              current = $results.children().first("div");
+              current.addClass("highlight").attr("aria-selected", true);
+              $input.attr("aria-activedescendant", current.attr("id"));
+            }
+          }
+
+          function removeCurrent() {
+            current = $results.find(".highlight");
+            current.attr("aria-selected", false);
+            current.removeClass("highlight");
+          }
+
+          function selectOption(highlighted, href) {
+            if (highlighted && href) {  // @todo add logic for non-link suggestions
+              // Emit an event whose data can be used to write to analytics, etc.
+              $(document).trigger("SearchApiFederatedSolr::block::autocomplete::selection",
+                [
+                  {
+                    referrer: $(location).attr("href"),
+                    target: href,
+                    term: $input.val()
+                  }
+                ]
+              );
+
+              // Redirect to the selected link.
+              $(location).attr("href", href);
+            }
+            else {
+              return;
+            }
+          }
+        });
+    }
+  };
+  Drupal.SearchApiFederatedSolrAutocomplete = autocomplete;
+})(jQuery, Drupal, drupalSettings);
+;
+/**
+ * @file
+ * File init.js.
+ */
+
+(function (Drupal, settings) {
+  Drupal.behaviors.googleTranslatorElement = {
+
+    init: function () {
+      var displayMode = settings.googleTranslatorElement.displayMode;
+      new google.translate.TranslateElement({
+        pageLanguage: 'en',
+        includedLanguages: settings.googleTranslatorElement.languages,
+        layout: google.translate.TranslateElement.InlineLayout[displayMode],
+      }, settings.googleTranslatorElement.id);
+    },
+
+  };
+})(Drupal, drupalSettings);
+;
+/**
+ * @file
+ * File disclaimer.js.
+ */
+
+(function ($, Drupal) {
+
+  "use strict";
+
+  Drupal.behaviors.googleTranslatorDisclaimer = {
+
+    getCookie: function (name) {
+      // Check for google translations cookies.
+      var i, x, y, cookies = document.cookie.split(";");
+      for (i = 0; i < cookies.length; i++) {
+        x = cookies[i].substr(0, cookies[i].indexOf("="));
+        y = cookies[i].substr(cookies[i].indexOf("=") + 1);
+        x = x.replace(/^\s+|\s+$/g, "");
+        if (x == name) {
+          return unescape(y);
+        }
+      }
+    },
+
+    attach: function (context, settings) {
+      var config = settings.googleTranslatorDisclaimer || {},
+        $disclaimerLink = $(config.jquerySelector, context),
+        swap = function () {
+          $disclaimerLink.replaceWith(config.element);
+        };
+
+      // When the user has previously activated google translate, the cookie
+      // will be set and we can proceed straight to exposing the language
+      // button without the disclaimer interstitial.
+      if ($disclaimerLink.length &&
+          typeof this.getCookie('googtrans') != 'undefined') {
+        swap();
+      }
+      else {
+        // Listen for user click on the translate interstitial (disclaimer) link.
+        $disclaimerLink.click(function (event) {
+
+          // Show the disclaimer text if available.
+          if (config.disclaimer &&
+              config.disclaimer.trim().length > 0) {
+
+            // Don't show the interstitial if it's already there.
+            if ($('#__dimScreen', context).length == 0) {
+              var accept = '<a href="#" class="accept-terms">' + config.acceptText + '</a>',
+                cancel = '<a href="#" class="do-not-accept-terms">' + config.dontAcceptText + '</a>',
+                message = '<div class="message">' + config.disclaimer + '<div>' + accept + ' ' + cancel + '</div></div>';
+              $('<div id="__dimScreen"><div class="overlay-wrapper"></div></div>', context).css({
+                height : '100%',
+                left : '0px',
+                position : 'fixed',
+                top : '0px',
+                width : '100%',
+                zIndex : '700'
+              }).appendTo(document.body);
+
+              // Attach message text.
+              $('#__dimScreen .overlay-wrapper', context).after(message);
+
+              // Focus on accept link when modal appears.
+              $('#__dimScreen .message a.accept-terms', context).focus();
+
+              // Accepted terms.
+              $('#__dimScreen .message a.accept-terms', context).click(function (event) {
+                $('#__dimScreen', context).remove();
+                swap();
+                $.getScript('//cdn.jsdelivr.net/gh/liamdanger/jQuery.DOMNodeAppear@master/jquery.domnodeappear.js')
+                  .done(function () {
+                    $('.goog-te-gadget', context).DOMNodeAppear(function () {
+                      setTimeout(function () {
+                        // Focus on the gadget.
+                        $('a.goog-te-menu-value', context).focus();
+                      }, 500);
+                    }, '.goog-te-gadget');
+                  });
+              });
+
+              // Attach esc key to cancel action terms action.
+              $(document, context).keyup(function (e) {
+                if (e.keyCode == 27) {
+                  $('#__dimScreen', context).remove();
+                  $disclaimerLink.focus();
+                }
+              });
+              // Cancel, did not accept terms.
+              $('#__dimScreen .message a.do-not-accept-terms', context).click(function (event) {
+                $('#__dimScreen', context).remove();
+                // Plant the focus back where we left it.
+                $disclaimerLink.focus();
+              });
+
+              $('#__dimScreen .overlay-wrapper', context).css({
+                background : '#000',
+                height : '100%',
+                left : '0px',
+                opacity : '0',
+                position : 'absolute',
+                top : '0px',
+                width : '100%',
+                zIndex : '760'
+              }).fadeTo(100, 0.75, function (event) { });
+            }
+          }
+
+          // If the disclaimer text is not available, then just show the widget.
+          else {
+            swap();
+          }
+        });
+      }
+    }
+
+  }
+})(jQuery, Drupal);
+;
